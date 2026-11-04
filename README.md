@@ -27,8 +27,10 @@ Remove the symlinks with `./setup.sh --unstow`.
 
 ## Layout
 
-Each top-level folder is a [GNU Stow](https://www.gnu.org/software/stow/)
-package that mirrors `$HOME`:
+Each folder under `home/` is a [GNU Stow](https://www.gnu.org/software/stow/)
+package that mirrors `$HOME`; `setup.sh` stows every one it finds, so adding a
+package is just adding a folder. Everything at the repo root is meta
+(`setup.sh`, `Brewfile`, `agents.conf`, CI).
 
 | Package   | Links to                                  |
 | --------- | ----------------------------------------- |

@@ -8,7 +8,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 PASTURE_DIR="$PWD"
-PACKAGES=(ghostty herdr helix lazygit bin zsh)
+# Every directory under home/ is a stow package that mirrors $HOME.
+# Discovered, not listed, so a new package can't be forgotten here.
+STOW_DIR="$PASTURE_DIR/home"
+PACKAGES=()
+for _dir in "$STOW_DIR"/*/; do PACKAGES+=("$(basename "$_dir")"); done
+unset _dir
+(( ${#PACKAGES[@]} > 0 )) || { echo "setup.sh: no packages in $STOW_DIR" >&2; exit 1; }
 BACKUP_DIR="$HOME/.pasture-backup/$(date +%Y%m%d-%H%M%S)"
 # Ghostty on macOS also reads this file, and it wins over ~/.config/ghostty.
 GHOSTTY_MAC_CONFIG="$HOME/Library/Application Support/com.mitchellh.ghostty/config"
@@ -19,7 +25,7 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 
 # --no-folding: link files, never whole directories. Otherwise ~/.config/helix
 # would become a symlink and Helix would write grammars/runtime into this repo.
-stow_cmd() { stow --no-folding --dir "$PASTURE_DIR" --target "$HOME" "$@"; }
+stow_cmd() { stow --no-folding --dir "$STOW_DIR" --target "$HOME" "$@"; }
 
 backup() {
   local target="$1"
@@ -31,11 +37,11 @@ backup() {
 conflicts_in() {
   # Print package-relative paths (e.g. .config/herdr/config.toml) whose target
   # in $HOME is a real file, i.e. something stow would refuse to replace.
-  local pkg="$1" file rel
+  local pkg_dir="$STOW_DIR/$1" file rel
   while IFS= read -r file; do
-    rel="${file#"$pkg"/}"
+    rel="${file#"$pkg_dir"/}"
     if [[ -e "$HOME/$rel" && ! -L "$HOME/$rel" ]]; then echo "$rel"; fi
-  done < <(find "$pkg" -type f)
+  done < <(find "$pkg_dir" -type f)
 }
 
 backup_conflicts() {
