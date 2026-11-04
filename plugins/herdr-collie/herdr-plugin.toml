@@ -1,0 +1,19 @@
+# 🐕 pasture's border collie: watches the flock (every agent pane) and puts a
+# 🐕 next to the ones waiting for you in the sidebar. Notifications are herdr's
+# own ([ui.toast]) via Ghostty; ⌃⌥A jumps to the agent (bin/pasture-collie).
+# The board (⌃⌥S = ctrl+alt+s) is bin/pasture-collie, opened as a herdr popup.
+id = "pasture.collie"
+name = "pasture collie"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Tag agents that wait for you with a 🐕 in the sidebar"
+platforms = ["macos"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["./bark.sh"]
+
+# You looked at it: take the 🐕 off without waiting for a state change.
+[[events]]
+on = "pane.focused"
+command = ["./bark.sh"]

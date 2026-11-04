@@ -1,0 +1,30 @@
+# pasture's herdr plugin: keeps the sidebar tags from pasture-icons fresh
+# (`$icon` per workspace, `$vendor` per agent) without running it by hand.
+# Linked, not installed, by setup.sh: `herdr plugin link plugins/herdr-pasture`.
+id = "pasture.tags"
+name = "pasture tags"
+version = "0.1.0"
+min_herdr_version = "0.9.3"
+description = "Project-type and agent-maker emoji in the herdr sidebar"
+platforms = ["macos", "linux"]
+
+# Metadata does not survive a server restart: re-tag everything once.
+[[startup]]
+command = ["./tag.sh"]
+
+# A new agent showed up (or replaced another in its pane): tag its maker.
+[[events]]
+on = "pane.agent_detected"
+command = ["./tag.sh"]
+
+# A new workspace: give it its project-type icon.
+[[events]]
+on = "workspace.created"
+command = ["./tag.sh"]
+
+# Manual re-tag from the action palette or `herdr plugin action invoke`.
+[[actions]]
+id = "retag"
+title = "Re-tag sidebar emoji"
+contexts = ["workspace"]
+command = ["./tag.sh"]

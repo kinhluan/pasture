@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# pasture-icons — tag every herdr workspace with an emoji for its project type
+# (`$icon`) and every agent pane with its maker (`$vendor`), both shown in the
+# sidebar (see herdr/config.toml).
+#
+#   pasture-icons          tag all workspaces
+#   pasture-icons <ws_id>  tag one (pasture-layout does this for its own)
+#
+# Metadata, not renames: workspace names stay plain for the window title,
+# scripts and `herdr workspace focus`. herdr may drop metadata when its server
+# restarts; run this again then.
+set -euo pipefail
+
+# First match wins, so the most specific build system goes first:
+# a Bazel monorepo full of Java is "Bazel", not "Java".
+icon_for() {
+  local d="$1"
+  if   [[ -e $d/MODULE.bazel || -e $d/WORKSPACE || -e $d/WORKSPACE.bazel ]]; then echo "🏗️"
+  elif [[ -e $d/pom.xml || -e $d/build.gradle || -e $d/build.gradle.kts ]]; then echo "☕"
+  elif [[ -e $d/pyproject.toml || -e $d/requirements.txt || -e $d/uv.lock ]]; then echo "🐍"
+  elif [[ -e $d/package.json || -e $d/pnpm-workspace.yaml ]]; then echo "🟢"
+  elif [[ -e $d/Cargo.toml ]]; then echo "🦀"
+  elif [[ -e $d/go.mod ]]; then echo "🐹"
+  elif [[ -e $d/Brewfile || -e $d/setup.sh ]]; then echo "🐑"
+  elif [[ -d $d/.git ]]; then echo "📁"
+  fi
+}
+
+# Agent id (herdr's canonical one) → maker. Unknown agents get no tag.
+vendor_for() {
+  case "$1" in
+    claude) echo "🟠 Anthropic" ;;
+    codex)  echo "🟢 OpenAI" ;;
+    grok)   echo "⚫ xAI" ;;
+    agy)    echo "🔵 Google" ;;
+  esac
+}
+
+# workspace_id → cwd of its first pane, resolved to the repo root.
+panes=$(herdr pane list | jq -r '.result.panes[] | "\(.workspace_id)\t\(.cwd // "")"')
+want="${1:-}"
+
+seen=" "   # space-separated ids; macOS /bin/bash 3.2 has no associative arrays
+while IFS=$'\t' read -r ws cwd; do
+  [[ -z "$cwd" || "$seen" == *" $ws "* ]] && continue
+  [[ -n "$want" && "$ws" != "$want" ]] && continue
+  seen+="$ws "
+  root=$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null || echo "$cwd")
+  icon=$(icon_for "$root")
+  if [[ -n "$icon" ]]; then
+    herdr workspace report-metadata "$ws" --source pasture --token "icon=$icon" >/dev/null
+    printf '%s %s  %s\n' "$icon" "$ws" "${root##*/}"
+  else
+    # Tokens are patches: an old icon stays unless cleared explicitly.
+    herdr workspace report-metadata "$ws" --source pasture --clear-token icon >/dev/null 2>&1 || true
+  fi
+done <<<"$panes"
+
+# Agent panes: tag each with its maker. Runs for all panes even with <ws_id>,
+# since it is cheap and agents move between workspaces.
+herdr agent list | jq -r '.result.agents[] | "\(.pane_id)\t\(.agent)"' |
+while IFS=$'\t' read -r pane agent; do
+  vendor=$(vendor_for "$agent")
+  if [[ -n "$vendor" ]]; then
+    herdr pane report-metadata "$pane" --source pasture --token "vendor=$vendor" >/dev/null 2>&1 || true
+  else
+    # An unknown agent replaced a known one: drop the previous maker's tag.
+    herdr pane report-metadata "$pane" --source pasture --clear-token vendor >/dev/null 2>&1 || true
+  fi
+done

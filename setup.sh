@@ -3,7 +3,8 @@
 #
 #   ./setup.sh            install packages, back up conflicts, stow, verify
 #   ./setup.sh --dry-run  show what stow would link, change nothing
-#   ./setup.sh --unstow   remove pasture's symlinks (backups stay in ~/.pasture-backup)
+#   ./setup.sh --unstow   remove pasture's symlinks and unlink its herdr plugins
+#                         (backups stay in ~/.pasture-backup)
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -29,6 +30,8 @@ stow_cmd() { stow --no-folding --dir "$STOW_DIR" --target "$HOME" "$@"; }
 
 backup() {
   local target="$1"
+  # Backups are copies of personal config: keep them owner-only.
+  mkdir -p "$HOME/.pasture-backup" && chmod 700 "$HOME/.pasture-backup"
   mkdir -p "$BACKUP_DIR/$(dirname "${target#"$HOME"/}")"
   mv "$target" "$BACKUP_DIR/${target#"$HOME"/}"
   warn "backed up $target → $BACKUP_DIR"
@@ -83,10 +86,26 @@ dry_run() {
 install_starpls() {
   command -v starpls >/dev/null && return
   say "installing starpls $STARPLS_VERSION (Starlark/Bazel LSP) into ~/.local/bin"
-  local arch; arch=$(uname -m); [[ "$arch" == x86_64 ]] && arch=amd64
+  local arch sha
+  arch=$(uname -m)
+  # Pinned to the GitHub release asset digests for $STARPLS_VERSION; bump both
+  # together (`gh api repos/withered-magic/starpls/releases/tags/<tag>`).
+  case "$arch" in
+    arm64)  sha=15320c409f55f50ac052221a29eed269a3278ed67de7c5b2462f58bfae07a3fa ;;
+    x86_64) arch=amd64; sha=5a939eadd7a4aebe30ae4a384b614ebdbfb51b4ef0baca74e46a741cdb5d2b4e ;;
+    *) warn "starpls: unsupported arch $arch, skipping"; return ;;
+  esac
   local url="https://github.com/withered-magic/starpls/releases/download/$STARPLS_VERSION/starpls-darwin-$arch.tar.gz"
-  mkdir -p "$HOME/.local/bin"
-  curl -fsSL "$url" | tar -xz -C "$HOME/.local/bin" starpls
+  local tmp; tmp=$(mktemp -d)
+  # Download, verify, then extract: never pipe an unverified archive into tar.
+  if curl -fsSL -o "$tmp/starpls.tgz" "$url" \
+     && echo "$sha  $tmp/starpls.tgz" | shasum -a 256 -c --status; then
+    mkdir -p "$HOME/.local/bin"
+    tar -xzf "$tmp/starpls.tgz" -C "$HOME/.local/bin" starpls
+  else
+    warn "starpls download failed or checksum mismatch — not installed"
+  fi
+  rm -rf "$tmp"
 }
 
 install_integrations() {
@@ -99,6 +118,42 @@ install_integrations() {
       herdr integration install "$integration" || warn "herdr integration $integration failed"
     fi
   done < agents.conf
+}
+
+plugin_ids() {
+  # Top-level `id = "..."` of each plugins/*/herdr-plugin.toml; stop at the
+  # first [section] so action ids (also `id = ...`) are not picked up.
+  local manifest
+  for manifest in "$PASTURE_DIR"/plugins/*/herdr-plugin.toml; do
+    [[ -f "$manifest" ]] && sed -n '/^\[/q; s/^id = "\(.*\)"$/\1/p' "$manifest"
+  done
+}
+
+unlink_plugins() {
+  # Otherwise their hooks keep running from (or break without) this checkout.
+  # An already-unlinked plugin is a success ("removed": false), so a nonzero
+  # exit is a real failure: report it and fail, never claim "unstowed".
+  command -v herdr >/dev/null || return 0
+  local id failed=0
+  while IFS= read -r id; do
+    [[ -n "$id" ]] || continue
+    if ! herdr plugin unlink "$id" >/dev/null; then
+      warn "herdr plugin unlink $id failed; its hooks are still registered"
+      failed=1
+    fi
+  done < <(plugin_ids)
+  return "$failed"
+}
+
+link_plugins() {
+  # Our own herdr plugins live in plugins/<name>/. `link` (not `install`) keeps
+  # them running from this checkout, and re-linking is a no-op.
+  command -v herdr >/dev/null || return
+  local dir
+  for dir in "$PASTURE_DIR"/plugins/*/; do
+    [[ -f "$dir/herdr-plugin.toml" ]] || continue
+    herdr plugin link "${dir%/}" >/dev/null || warn "herdr plugin link ${dir%/} failed"
+  done
 }
 
 verify() {
@@ -119,7 +174,7 @@ verify() {
 
 case "${1:-}" in
   --dry-run) dry_run; exit ;;
-  --unstow)  stow_cmd --delete "${PACKAGES[@]}"; say "unstowed"; exit 0 ;;
+  --unstow)  stow_cmd --delete "${PACKAGES[@]}"; unlink_plugins || exit 1; say "unstowed"; exit 0 ;;
   "") ;;
   *) echo "usage: $0 [--dry-run|--unstow]" >&2; exit 2 ;;
 esac
@@ -136,6 +191,7 @@ command -v herdr >/dev/null && herdr server reload-config >/dev/null 2>&1 || tru
 
 say "herdr integrations"
 install_integrations
+link_plugins
 
 verify
 say "done — open Ghostty, run \`herdr\`, then \`pasture-layout\` inside a repo"

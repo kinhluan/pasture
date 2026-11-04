@@ -2,11 +2,66 @@
 # Validate with `herdr config check`, apply with `herdr server reload-config`.
 onboarding = false
 
+# Follow Ghostty's ANSI palette like Helix, lazygit and starship do. herdr's
+# default (catppuccin) is a fixed palette that would ignore Ghostty's theme.
+[theme]
+name = "terminal"
+
 [ui]
 status_indicators = "symbols"
+# Emoji live only where herdr takes free text: the outer window title, the
+# right side of the tab bar, and pane labels (set by pasture-layout). Sidebar
+# rows take no free text, but pasture-icons feeds them `$icon` metadata.
+window_title = "🐑 {workspace} · {tab}"
+tab_bar_right = [
+  { type = "zoom" },
+  { type = "text", text = "🐑 pasture" },
+  { type = "datetime", format = "🕐 %H:%M" },
+]
+tab_bar_right_separator = "  "
 
+# `$icon` is workspace metadata that pasture-icons reports (☕ Java, 🐍 Python…).
+# Missing values vanish with their separator, so unmarked spaces look as before.
+# Agents grouped by company: `$vendor` (emoji + maker, reported by
+# pasture-icons); `$alert` is the collie's 🐕 on agents waiting for you and the agent name in the maker's color. Hex on purpose:
+# herdr's token styles take #RGB only, so these four ignore Ghostty's palette.
+[ui.sidebar.agents]
+rows = [
+  ["state_icon", "$alert", "machine", "workspace", "tab"],
+  ["$vendor", "agent"],
+]
+
+[ui.sidebar.agents.rows_by_agent]
+claude = [
+  ["state_icon", "$alert", "machine", "workspace", "tab"],
+  ["$vendor", { token = "agent", fg = "#D97757", bold = true }],
+]
+codex = [
+  ["state_icon", "$alert", "machine", "workspace", "tab"],
+  ["$vendor", { token = "agent", fg = "#10A37F", bold = true }],
+]
+grok = [
+  ["state_icon", "$alert", "machine", "workspace", "tab"],
+  ["$vendor", { token = "agent", fg = "#A0A0A0", bold = true }],
+]
+agy = [
+  ["state_icon", "$alert", "machine", "workspace", "tab"],
+  ["$vendor", { token = "agent", fg = "#4285F4", bold = true }],
+]
+
+[ui.sidebar.spaces]
+rows = [
+  ["state_icon", "$icon", "workspace"],
+  ["branch", "git_status"],
+]
+
+# Agent "finished" / "needs input" notifications, handed to Ghostty: its icon,
+# its (already granted) permission, a click raises Ghostty; then ⌃⌥A jumps to
+# the agent. No popup for the tab you're on; delay_seconds skips states that
+# flip right back. (`system` would fall back to osascript, i.e. Script Editor.)
 [ui.toast]
 delivery = "terminal"
+delay_seconds = 2
 
 # Prefix stays ctrl+b. The direct ctrl+alt chords are the prefix-free set
 # vetted in https://herdr.dev/tui/docs/keyboard/ — Helix binds no ctrl+alt
@@ -22,3 +77,32 @@ new_tab = ["prefix+c", "ctrl+alt+c"]
 split_vertical = ["prefix+v", "ctrl+alt+d"]
 split_horizontal = ["prefix+minus", "ctrl+alt+shift+d"]
 zoom = ["prefix+z", "ctrl+alt+z"]
+
+# Helix on demand: a popup over the whole layout instead of a tiled pane, so
+# the agent keeps the width. ctrl+alt+e again (bound in Helix) or :qa closes
+# it; that ends hx, so unsaved buffers block the close until :w or :qa!.
+# Opens in the focused pane's directory.
+[[keys.command]]
+key = "ctrl+alt+e"
+type = "popup"
+command = "cd \"${HERDR_ACTIVE_PANE_CWD:-$PWD}\" && exec hx ."
+description = "Helix (popup)"
+width = "90%"
+height = "90%"
+
+# 🐕 Go to the sheep that barked: first blocked agent, else first done one.
+# Press it right after clicking a notification.
+[[keys.command]]
+key = "ctrl+alt+a"
+type = "shell"
+command = "exec \"$HOME/.local/bin/pasture-collie\" --jump"
+description = "jump to the agent that needs you"
+
+# 🐕 The flock board: every agent, blocked ones first; type a number to jump.
+[[keys.command]]
+key = "ctrl+alt+s"
+type = "popup"
+command = "exec \"$HOME/.local/bin/pasture-collie\""
+description = "pasture collie (agent board)"
+width = "90%"
+height = "70%"

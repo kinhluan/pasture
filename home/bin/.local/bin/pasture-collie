@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# pasture-collie — 🐕 the flock at a glance: every herdr agent, the ones that
+# need you first. Pick a number to jump to that agent.
+#
+#   pasture-collie          board + jump (herdr popup on ⌃⌥S, i.e. ctrl+alt+s)
+#   pasture-collie --list   board only, no prompt (for scripts / agents)
+#   pasture-collie --jump   go straight to the agent that needs you most
+#                           (first blocked, else first done; ⌃⌥A)
+#
+# The barking half is the 🐕 sidebar tag from the pasture.collie plugin
+# (plugins/herdr-collie) plus herdr's own notifications ([ui.toast]).
+set -euo pipefail
+# Popups and shell keys start from the herdr server's environment, which may
+# lack ~/.local/bin or Homebrew; prefer the herdr that launched us.
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+[[ -n "${HERDR_BIN_PATH:-}" ]] && PATH="$(dirname "$HERDR_BIN_PATH"):$PATH"
+export PATH
+# Character-aware ${var:0:n} needs a UTF-8 locale; popups may start without one.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in *UTF-8*|*utf8*) ;; *) export LC_ALL=en_US.UTF-8 ;; esac
+
+agents=$(herdr agent list)
+
+if [[ "${1:-}" == "--jump" ]]; then
+  target=$(jq -r '[.result.agents[] | select(.agent_status == "blocked")][0].pane_id
+                  // [.result.agents[] | select(.agent_status == "done")][0].pane_id
+                  // empty' <<<"$agents")
+  [[ -n "$target" ]] && herdr agent focus "$target" >/dev/null
+  exit 0
+fi
+
+workspaces=$(herdr workspace list)
+tabs=$(herdr tab list)
+
+# One TSV row per agent, most urgent first:
+#   pane_id  status_icon  agent_icon  agent  workspace · tab  title
+# Emoji get their own fields: printf pads by bytes, so padding only plain text
+# keeps the columns straight.
+rows=$(jq -r --argjson ws "$workspaces" --argjson tabs "$tabs" '
+  ($ws.result.workspaces | map({(.workspace_id): .label}) | add) as $names
+  | ($tabs.result.tabs | map({(.tab_id): .label}) | add) as $tabnames
+  | def rank: {"blocked":0,"done":1,"working":2,"idle":3}[.] // 4;
+    def sicon: {"blocked":"⛔","done":"✅","working":"🏃","idle":"💤"}[.] // "❔";
+    def aicon: {"claude":"🤖","codex":"🧠","grok":"⚡","agy":"🪐"}[.] // "🐑";
+  .result.agents
+  | sort_by((.agent_status | rank), ($names[.workspace_id] // .workspace_id))
+  | .[]
+  | [ .pane_id,
+      (.agent_status | sicon),
+      (.agent | aicon),
+      .agent,
+      (($names[.workspace_id] // .workspace_id) + " · " + ($tabnames[.tab_id] // .tab_id)),
+      (.terminal_title_stripped // "" | gsub("[\t\n]"; " ")) ]
+  | @tsv' <<<"$agents")
+
+count() { jq -r --arg s "$1" '[.result.agents[] | select(.agent_status == $s)] | length' <<<"$agents"; }
+total=$(jq -r '.result.agents | length' <<<"$agents")
+echo "🐕 flock: $total sheep · ⛔ $(count blocked) waiting on you · ✅ $(count 'done') done · 🏃 $(count working) working"
+echo
+
+cols=${COLUMNS:-$(tput cols 2>/dev/null || echo 100)}
+i=0
+panes=()
+while IFS=$'\t' read -r pane sicon aicon agent where title; do
+  [[ -n "$pane" ]] || continue
+  i=$((i + 1))
+  panes+=("$pane")
+  # Cut by characters, not bytes (printf's %.34s could split a UTF-8 char),
+  # then pad by hand: printf pads by bytes too. Wide (CJK/emoji) names can
+  # still misalign: characters are not terminal cells.
+  where="${where:0:34}"
+  pad=$(( 34 - ${#where} )); (( pad > 0 )) || pad=0
+  line=$(printf '%3d  %s  %s %-6s  %s%*s %s' "$i" "$sicon" "$aicon" "$agent" "$where" "$pad" "" "$title")
+  # Emoji are 2 columns wide; leave slack so lines never wrap in the popup.
+  printf '%s\n' "${line:0:$((cols - 6))}"
+done <<<"$rows"
+
+[[ "${1:-}" == "--list" || $i -eq 0 ]] && exit 0
+
+echo
+read -r -p "🐕 number to jump to (Enter to close): " pick || exit 0
+[[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= i )) || exit 0
+herdr agent focus "${panes[$((pick - 1))]}" >/dev/null
