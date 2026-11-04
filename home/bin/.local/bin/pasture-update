@@ -3,7 +3,16 @@
 # a before → after table. `--all` also runs `brew bundle` for the Brewfile.
 set -uo pipefail
 
-PASTURE_DIR="${PASTURE_DIR:-$HOME/Documents/code/pasture}"
+# Find the checkout from our own stow symlink (~/.local/bin/pasture-update →
+# <repo>/home/bin/.local/bin/pasture-update), so pasture can live anywhere.
+# BSD readlink has no -f; one hop is all stow makes. PASTURE_DIR overrides.
+repo_dir() {
+  local link dir
+  link=$(readlink "$0" 2>/dev/null) || link="$0"
+  dir=$(cd "$(dirname "$0")" && cd "$(dirname "$link")" && pwd) || return 1
+  (cd "$dir/../../../.." && pwd)
+}
+PASTURE_DIR="${PASTURE_DIR:-$(repo_dir)}"
 CONF="$PASTURE_DIR/agents.conf"
 
 trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
@@ -72,4 +81,13 @@ main() {
   ((${#FAILED[@]} == 0))
 }
 
-main "$@"
+# Anything but no argument or --all must not start updating: an unknown flag
+# used to fall through and update everything.
+case "${1:-}" in
+  "" | --all) main "$@" ;;
+  -h | --help)
+    echo "usage: pasture-update [--all]"
+    echo "  updates every tool in $CONF; --all also runs brew bundle"
+    ;;
+  *) echo "pasture-update: unknown option '$1' (try --help)" >&2; exit 2 ;;
+esac

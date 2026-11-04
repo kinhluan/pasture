@@ -60,11 +60,22 @@ curl -fsSL https://herdr.dev/install.sh | sh   # read it first, see Trust below
 Then:
 
 ```bash
-git clone https://github.com/kinhluan/pasture.git ~/Documents/code/pasture
-cd ~/Documents/code/pasture
-./setup.sh --dry-run   # preview every symlink, change nothing
-./setup.sh             # brew bundle → backup → stow → herdr integrations + plugins → verify
+git clone https://github.com/kinhluan/pasture.git
+cd pasture
+./setup.sh --dry-run   # show what would be linked or backed up; changes nothing
+./setup.sh             # install, back up, link, hook into herdr, check
 ```
+
+Clone it wherever you like: the links point back at that folder, so keep it
+there (move it, then run `./setup.sh` again). What `./setup.sh` does, in order:
+
+1. `brew bundle`: the tools in the [Brewfile](Brewfile), plus `starpls` (Bazel
+   LSP) from its GitHub release, checksum-verified.
+2. Moves any existing config that would be replaced into the backup folder.
+3. Links every package under `home/` into `$HOME` with GNU Stow.
+4. Installs herdr's integrations for the agents you have, and links pasture's
+   herdr plugins.
+5. Checks herdr's config, Helix's language servers, logins and the `.zshrc` line.
 
 Your existing files are moved to `~/.pasture-backup/<timestamp>/` (owner-only),
 never overwritten. `./setup.sh --unstow` removes the symlinks and unlinks the
