@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tools
+        run: brew install shellcheck stow helix zsh
+
+      - name: Lint shell scripts
+        run: shellcheck setup.sh bin/.local/bin/*
+
+      - name: zsh snippet parses
+        run: zsh -n zsh/.config/pasture/pasture.zsh
+
+      - name: Stow dry run into a clean HOME
+        run: |
+          export HOME="$RUNNER_TEMP/home" && mkdir -p "$HOME"
+          ./setup.sh --dry-run
+
+      - name: Helix parses our config
+        run: |
+          mkdir -p ~/.config/helix
+          cp helix/.config/helix/*.toml ~/.config/helix/
+          hx --health toml

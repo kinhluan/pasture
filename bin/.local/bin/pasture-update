@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# pasture-update — update every agent CLI listed in agents.conf, then print
+# a before → after table. `--all` also runs `brew bundle` for the Brewfile.
+set -uo pipefail
+
+PASTURE_DIR="${PASTURE_DIR:-$HOME/Documents/code/pasture}"
+CONF="$PASTURE_DIR/agents.conf"
+
+trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; printf '%s' "${s%"${s##*[![:space:]]}"}"; }
+
+version_of() {
+  # First line of `<tool> --version`, or "-" when the tool is missing.
+  bash -c "$1" 2>/dev/null | head -n1 || true
+}
+
+# Seconds before a single update is killed (needs `timeout`/`gtimeout`).
+UPDATE_TIMEOUT="${PASTURE_UPDATE_TIMEOUT:-300}"
+
+# run_update NAME UPDATE_CMD
+#   Runs one tool's self-update; its output stays visible.
+#   Returns 0 = updated, 1 = failed (recorded in FAILED), 2 = not installed.
+#   A failure never aborts the loop: one broken updater shouldn't block the rest.
+run_update() {
+  local name="$1" cmd="$2"
+
+  if ! command -v "$name" >/dev/null; then
+    echo "not installed, skipping"
+    return 2
+  fi
+
+  # macOS has no `timeout` unless coreutils is installed (as gtimeout).
+  local -a guard=()
+  if command -v timeout >/dev/null; then guard=(timeout "$UPDATE_TIMEOUT")
+  elif command -v gtimeout >/dev/null; then guard=(gtimeout "$UPDATE_TIMEOUT")
+  fi
+
+  if ! "${guard[@]+"${guard[@]}"}" bash -c "$cmd"; then
+    FAILED+=("$name")
+    return 1
+  fi
+}
+
+main() {
+  [[ -f "$CONF" ]] || { echo "pasture-update: missing $CONF (set PASTURE_DIR)" >&2; exit 1; }
+
+  FAILED=()
+  local rows=()
+  while IFS='|' read -r name vcmd ucmd _integration; do
+    name=$(trim "$name"); [[ -z "$name" || "$name" == \#* ]] && continue
+    vcmd=$(trim "$vcmd"); ucmd=$(trim "$ucmd")
+
+    local before after status
+    before=$(version_of "$vcmd")
+    printf '\n\033[1m==> %s\033[0m  (%s)\n' "$name" "$ucmd"
+    run_update "$name" "$ucmd"
+    case $? in 0) status=ok ;; 2) status=skip ;; *) status=FAIL ;; esac
+    after=$(version_of "$vcmd")
+    rows+=("$name|${before:--}|${after:--}|$status")
+  done < "$CONF"
+
+  if [[ "${1:-}" == "--all" ]]; then
+    printf '\n\033[1m==> brew bundle\033[0m\n'
+    brew bundle --file="$PASTURE_DIR/Brewfile" || { rows+=("brew|-|-|FAIL"); FAILED+=(brew); }
+  fi
+
+  printf '\n%-8s  %-40s  %-40s  %s\n' TOOL BEFORE AFTER STATUS
+  for row in "${rows[@]}"; do
+    IFS='|' read -r n b a s <<<"$row"
+    printf '%-8s  %-40.40s  %-40.40s  %s\n' "$n" "$b" "$a" "$s"
+  done
+
+  ((${#FAILED[@]} == 0))
+}
+
+main "$@"

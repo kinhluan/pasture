@@ -1,0 +1,49 @@
+# Language servers for the stack we actually work in.
+# Check everything with: hx --health java starlark python markdown toml yaml
+
+[language-server.starpls]
+command = "starpls"
+args = ["server"]
+
+[language-server.jdtls]
+command = "jdtls"
+
+[language-server.pyright]
+command = "pyright-langserver"
+args = ["--stdio"]
+
+[language-server.ruff]
+command = "ruff"
+args = ["server"]
+
+[[language]]
+name = "starlark"
+language-servers = ["starpls"]
+auto-format = false
+
+[[language]]
+name = "java"
+language-servers = ["jdtls"]
+
+[[language]]
+name = "python"
+language-servers = ["pyright", "ruff"]
+auto-format = true
+formatter = { command = "ruff", args = ["format", "-"] }
+
+[[language]]
+name = "markdown"
+language-servers = ["marksman"]
+
+[[language]]
+name = "toml"
+language-servers = ["taplo"]
+auto-format = true
+
+[[language]]
+name = "yaml"
+language-servers = ["yaml-language-server"]
+
+[[language]]
+name = "git-commit"
+rulers = [50, 72]

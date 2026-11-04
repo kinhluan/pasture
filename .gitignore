@@ -1,0 +1,6 @@
+.DS_Store
+# machine-local overrides, never committed
+*.local
+*.local.*
+# ...but `.local` is also a real directory in the bin package (~/.local/bin)
+!/bin/.local/

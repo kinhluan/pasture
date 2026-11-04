@@ -1,0 +1,24 @@
+# herdr — https://herdr.dev/tui/docs/configuration/
+# Validate with `herdr config check`, apply with `herdr server reload-config`.
+onboarding = false
+
+[ui]
+status_indicators = "symbols"
+
+[ui.toast]
+delivery = "terminal"
+
+# Prefix stays ctrl+b. The direct ctrl+alt chords are the prefix-free set
+# vetted in https://herdr.dev/tui/docs/keyboard/ — Helix binds no ctrl+alt
+# keys by default, so editor and multiplexer never fight over them.
+[keys]
+focus_pane_left = ["prefix+h", "ctrl+alt+h"]
+focus_pane_down = ["prefix+j", "ctrl+alt+j"]
+focus_pane_up = ["prefix+k", "ctrl+alt+k"]
+focus_pane_right = ["prefix+l", "ctrl+alt+l"]
+previous_tab = ["prefix+p", "ctrl+alt+["]
+next_tab = ["prefix+n", "ctrl+alt+]"]
+new_tab = ["prefix+c", "ctrl+alt+c"]
+split_vertical = ["prefix+v", "ctrl+alt+d"]
+split_horizontal = ["prefix+minus", "ctrl+alt+shift+d"]
+zoom = ["prefix+z", "ctrl+alt+z"]

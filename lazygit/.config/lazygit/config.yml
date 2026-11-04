@@ -1,0 +1,17 @@
+# lazygit — https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md
+os:
+  # Open files from lazygit in Helix.
+  editPreset: "helix"
+gui:
+  # pasture-layout gives lazygit a short, full-width pane: keep the side panels
+  # narrow so the diff gets the columns, and grow whichever panel is focused.
+  sidePanelWidth: 0.25
+  expandFocusedSidePanel: true
+  # Follow the terminal palette, like Helix and herdr.
+  theme:
+    selectedLineBgColor:
+      - reverse
+git:
+  diffRenderers:
+    - colorArg: always
+      type: rawGit

@@ -1,0 +1,11 @@
+# Ghostty — https://ghostty.org/docs/config
+# No theme set on purpose: Ghostty's default palette is the single source of
+# colors. Helix uses `base16_terminal`, so it follows whatever is set here.
+
+# Shift+Enter inserts a newline in Claude Code / Codex prompts.
+keybind = shift+enter=text:\x1b\r
+
+# >>> herdr-radar font block
+font-codepoint-map = U+E1A0-U+E1BA=Herdr Agent Icons Max
+font-codepoint-map = U+E1C0-U+E1C5=Herdr Agent Icons Max
+# <<< herdr-radar font block

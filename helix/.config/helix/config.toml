@@ -1,0 +1,41 @@
+# Helix — https://docs.helix-editor.com/configuration.html
+# base16_terminal draws with the terminal's 16 ANSI colors, so Helix always
+# matches the Ghostty palette.
+theme = "base16_terminal"
+
+[editor]
+line-number = "relative"
+cursorline = true
+color-modes = true
+bufferline = "multiple"
+rulers = [100]
+# No auto-save: agents edit the same files, and saving a stale buffer on focus
+# loss would silently overwrite their work. Use C-r (reload-all) instead.
+
+[editor.cursor-shape]
+insert = "bar"
+normal = "block"
+select = "underline"
+
+[editor.file-picker]
+hidden = false
+
+[editor.indent-guides]
+render = true
+
+[editor.lsp]
+display-inlay-hints = true
+
+[editor.statusline]
+left = ["mode", "spinner", "version-control", "file-name", "file-modification-indicator"]
+right = ["diagnostics", "workspace-diagnostics", "selections", "position", "file-type"]
+
+# Yank/paste through the system clipboard (pbcopy, or OSC 52 over SSH).
+[keys.normal.space]
+y = "yank_to_clipboard"
+p = "paste_clipboard_after"
+P = "paste_clipboard_before"
+
+[keys.normal]
+# Re-read every buffer from disk after an agent run.
+C-r = ":reload-all"
