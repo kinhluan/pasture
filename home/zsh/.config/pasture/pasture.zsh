@@ -24,3 +24,7 @@ if (( $+functions[compdef] )); then
   done
   unset _pasture_cli
 fi
+
+# Prompt: starship replaces the oh-my-zsh theme. Sourced last, so it wins over
+# ZSH_THEME; set ZSH_THEME="" in ~/.zshrc to skip loading the unused theme.
+(( $+commands[starship] )) && eval "$(starship init zsh)"

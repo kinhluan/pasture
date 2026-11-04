@@ -39,3 +39,10 @@ P = "paste_clipboard_before"
 [keys.normal]
 # Re-read every buffer from disk after an agent run.
 C-r = ":reload-all"
+# Same key that opens the herdr popup closes it. quit-all, not write-quit-all:
+# an agent may have changed files meanwhile, and saving stale buffers would
+# overwrite its work. Unsaved buffers block the quit; :w or :qa! then.
+C-A-e = ":quit-all"
+
+[keys.insert]
+C-A-e = ":quit-all"

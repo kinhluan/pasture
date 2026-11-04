@@ -5,6 +5,10 @@
 # Shift+Enter inserts a newline in Claude Code / Codex prompts.
 keybind = shift+enter=text:\x1b\r
 
+# Left Option = Alt, so herdr's and Helix's ctrl+alt / alt keys (⌃⌥…) always
+# reach them, whatever the keyboard layout. Right Option still types ´ ∫ ….
+macos-option-as-alt = left
+
 # >>> herdr-radar font block
 font-codepoint-map = U+E1A0-U+E1BA=Herdr Agent Icons Max
 font-codepoint-map = U+E1C0-U+E1C5=Herdr Agent Icons Max

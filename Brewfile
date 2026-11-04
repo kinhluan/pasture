@@ -6,6 +6,7 @@ brew "stow"
 brew "jq"
 brew "helix"
 brew "lazygit"
+brew "starship"   # prompt; config in home/starship
 
 # Forge CLIs: GitHub (gh) and GitLab (glab). Auth stays out of this repo:
 # `gh auth login`, `glab auth login --hostname <gitlab host>`.

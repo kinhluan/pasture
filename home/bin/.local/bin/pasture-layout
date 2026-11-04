@@ -1,26 +1,29 @@
 #!/usr/bin/env bash
 # pasture-layout — turn the current herdr pane into the pasture layout:
 #
-#   ┌──────────────┬──────────────┐
-#   │  hx          │  AGENT       │
-#   ├──────────────┴──────────────┤
-#   │  lazygit (full width)       │
-#   └─────────────────────────────┘
+#   ┌────────┬─────────────────────┐
+#   │ zsh ⭐ │  AGENT              │
+#   ├────────┴─────────────────────┤
+#   │  lazygit (full width)        │
+#   └──────────────────────────────┘
+#   ⌃⌥E (ctrl+alt+e) → Helix in a popup over everything; ⌃⌥E again hides it
 #
-# lazygit gets the full width because its side panels and diff need columns,
-# not rows; hx and the agent split the top evenly.
+# The calling pane stays a shell (starship prompt) for builds, tests and git
+# one-offs. Helix is not a tiled pane: it pops up on demand (see the
+# [[keys.command]] entry in herdr/config.toml), so the agent keeps the width.
+# lazygit gets the full width because its side panels and diff need columns.
 #
 # Usage (inside a herdr pane, at the repo root): pasture-layout [agent]
 # agent defaults to `claude`; try `codex`, `grok` or `agy`.
 #
 # Tune with env vars (herdr's --ratio is the share the ORIGINAL pane keeps):
-#   PASTURE_TOP=0.65   top row height (hx + agent); lazygit gets the rest
-#   PASTURE_LEFT=0.5   hx width within the top row; the agent gets the rest
+#   PASTURE_TOP=0.65   top row height (shell + agent); lazygit gets the rest
+#   PASTURE_LEFT=0.3   shell width within the top row; the agent gets the rest
 set -euo pipefail
 
 agent="${1:-claude}"
 top="${PASTURE_TOP:-0.65}"
-left="${PASTURE_LEFT:-0.5}"
+left="${PASTURE_LEFT:-0.3}"
 
 if [[ "${HERDR_ENV:-}" != "1" ]]; then
   echo "pasture-layout: run me inside a herdr pane (start herdr first)" >&2
@@ -30,12 +33,27 @@ fi
 new_pane() { herdr pane split "$@" --cwd "$PWD" --no-focus | jq -r '.result.pane.pane_id'; }
 
 # Split off the bottom first so lazygit spans the whole width,
-# then split the remaining top row into editor | agent.
+# then split the remaining top row into shell | agent.
 below=$(new_pane --current --direction down --ratio "$top")
 right=$(new_pane --current --direction right --ratio "$left")
 
 herdr pane run "$right" "$agent" >/dev/null
 herdr pane run "$below" "lazygit" >/dev/null
 
-# The calling pane becomes the editor.
-exec hx .
+# Emoji labels on the pane borders. Cosmetic: never fail the layout over them.
+label() { herdr pane rename "$1" "$2" >/dev/null 2>&1 || true; }
+case "$agent" in
+  claude) icon="🤖" ;; codex) icon="🧠" ;; grok) icon="⚡" ;; agy) icon="🪐" ;; *) icon="🤖" ;;
+esac
+label "${HERDR_PANE_ID:-}" "🐚 shell"
+label "$right" "$icon $agent"
+label "$below" "🌿 lazygit"
+
+# Tab named after its agent; workspace gets its project-type icon in the sidebar.
+tab=$(herdr pane current | jq -r '.result.pane.tab_id // empty' 2>/dev/null || true)
+[[ -n "$tab" ]] && { herdr tab rename "$tab" "$icon $agent" >/dev/null 2>&1 || true; }
+pasture-icons "${HERDR_PANE_ID%%:*}" >/dev/null 2>&1 || true
+
+# The calling pane stays the shell; hand focus to the agent.
+herdr pane focus --current --direction right >/dev/null 2>&1 || true
+echo "🐑 pasture ready — ⌃⌥E (Control+Option+E) opens Helix, ⌃⌥S the agent board"

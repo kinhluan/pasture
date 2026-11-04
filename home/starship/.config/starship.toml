@@ -1,0 +1,78 @@
+# Starship — https://starship.rs/config/
+# No palette on purpose: modules use named ANSI colors, so the prompt follows
+# Ghostty's theme like Helix and lazygit do (see README "Colors").
+# Emoji instead of Nerd Font glyphs: they render in any font, no patching.
+"$schema" = 'https://starship.rs/config-schema.json'
+
+# Two lines: context on top, a short input line below, so long repo paths
+# never squeeze the command you type in the narrow shell pane.
+format = """
+$directory$git_branch$git_state$git_status$java$python$nodejs$rust$golang$cmd_duration$status
+$character"""
+add_newline = false
+# Big monorepos (Bazel, 30k+ files) make git status slow; fail fast
+# instead of hanging the prompt.
+command_timeout = 500
+
+[character]
+success_symbol = '[🐑 ❯](bold green)'
+error_symbol = '[🐑 ❯](bold red)'
+
+[directory]
+format = '[📂 $path]($style)[$read_only]($read_only_style) '
+truncation_length = 3
+truncate_to_repo = true
+read_only = ' 🔒'
+
+[git_branch]
+format = '[🌿 $branch]($style) '
+
+[git_state]
+format = '[🚧 $state $progress_current/$progress_total]($style) '
+
+[git_status]
+format = '([$all_status$ahead_behind]($style) )'
+conflicted = '⚔️ '
+stashed = '📦'
+modified = '📝'
+staged = '✅'
+untracked = '❓'
+deleted = '🗑️ '
+renamed = '🔀'
+ahead = '⬆️ ${count}'
+behind = '⬇️ ${count}'
+diverged = '🔱'
+
+[java]
+format = '[☕ $version]($style) '
+
+[python]
+format = '[🐍 $version( \($virtualenv\))]($style) '
+
+[nodejs]
+format = '[🟢 $version]($style) '
+
+[rust]
+format = '[🦀 $version]($style) '
+
+[golang]
+format = '[🐹 $version]($style) '
+
+[cmd_duration]
+min_time = 3_000
+format = '[⏱️ $duration]($style) '
+
+[status]
+disabled = false
+format = '[💥 $status]($style) '
+
+# Cloud context is noise in agent panes and leaks account names into
+# screenshots / shared terminal output.
+[aws]
+disabled = true
+
+[gcloud]
+disabled = true
+
+[azure]
+disabled = true
