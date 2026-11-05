@@ -106,3 +106,21 @@ command = "exec \"$HOME/.local/bin/pasture-collie\""
 description = "pasture collie (agent board)"
 width = "90%"
 height = "70%"
+
+# 🪜 The Sapling stack of the focused pane's repo (w opens it in the browser).
+[[keys.command]]
+key = "ctrl+alt+g"
+type = "popup"
+command = "exec \"$HOME/.local/bin/pasture-stack\""
+description = "Sapling stack (popup)"
+width = "80%"
+height = "70%"
+
+# 💤 Send the sleeping sheep home: quit every idle agent after a y/N.
+[[keys.command]]
+key = "ctrl+alt+x"
+type = "popup"
+command = "exec \"$HOME/.local/bin/pasture-collie\" --sweep"
+description = "pasture collie: quit idle agents"
+width = "70%"
+height = "60%"

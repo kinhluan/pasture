@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# pasture-skills — 📚 install or refresh the skill packs in skills.conf for
+# every agent on this machine, so claude, codex, grok and Antigravity all know
+# the same skills.
+#
+#   pasture-skills          install / update every pack
+#   pasture-skills --list   show the global skills each agent has
+#
+# Where each agent reads global skills (the `skills` CLI's agent ids):
+#   Claude Code  plugin from the pack's marketplace, else ~/.claude/skills
+#   Codex        ~/.agents/skills              (codex)
+#   Grok Build   ~/.grok/skills                (grok)
+#   Antigravity  ~/.gemini/antigravity/skills  (antigravity)
+# The VS Code extensions of Claude Code and Codex read the same folders.
+#
+# PASTURE_SKILLS_CLI pins the `skills` CLI run through npx; bump it on purpose.
+set -euo pipefail
+
+repo_dir() {
+  local self
+  self=$(readlink "$0" 2>/dev/null || echo "$0")
+  [[ "$self" == /* ]] || self="$(dirname "$0")/$self"
+  cd "$(dirname "$self")/../../../.." && pwd
+}
+PASTURE_DIR="${PASTURE_DIR:-$(repo_dir)}"
+conf="$PASTURE_DIR/skills.conf"
+cli="${PASTURE_SKILLS_CLI:-skills@1.7.6}"
+
+say()  { printf '📚 %s\n' "$*"; }
+warn() { printf '⚠️  %s\n' "$*" >&2; }
+
+[[ -f "$conf" ]] || { warn "no $conf"; exit 1; }
+
+# `skills` agent ids for the agents installed here.
+agents=()
+command -v codex >/dev/null && agents+=(codex)
+command -v grok  >/dev/null && agents+=(grok)
+if command -v agy >/dev/null || [[ -d "/Applications/Antigravity IDE.app" ]]; then
+  agents+=(antigravity)
+fi
+
+if [[ "${1:-}" == "--list" ]]; then
+  command -v claude >/dev/null && { say "claude plugins"; claude plugin list 2>/dev/null || true; }
+  for a in "${agents[@]}"; do
+    say "$a"; npx -y "$cli" list -g -a "$a" 2>/dev/null || warn "could not list $a"
+  done
+  exit 0
+fi
+[[ -z "${1:-}" ]] || { echo "usage: pasture-skills [--list]" >&2; exit 2; }
+
+# Codex's folder is sometimes created by a `sudo npx …`; then nothing can be
+# written there without sudo again. Say how to fix it instead of failing late.
+if [[ -d "$HOME/.agents" && ! -w "$HOME/.agents" ]]; then
+  warn "$HOME/.agents is not writable (owned by $(stat -f %Su "$HOME/.agents")); fix with: sudo chown -R \"\$USER\" ~/.agents"
+fi
+
+has_npx=true
+command -v npx >/dev/null || { has_npx=false; warn "npx not found (install Node.js); only Claude Code plugins are handled"; }
+
+failed=0
+while IFS='|' read -r repo plugin; do
+  repo=$(echo "$repo" | xargs); plugin=$(echo "${plugin:-}" | xargs)
+  [[ -z "$repo" || "$repo" == \#* ]] && continue
+  targets=("${agents[@]}")
+
+  if command -v claude >/dev/null; then
+    if [[ -n "$plugin" && "$plugin" != - ]]; then
+      say "$repo → Claude Code plugin $plugin"
+      market="${plugin#*@}"
+      # Adding an existing marketplace or installing an installed plugin fails
+      # harmlessly; update is what actually refreshes them.
+      claude plugin marketplace add "$repo" >/dev/null 2>&1 || true
+      claude plugin marketplace update "$market" >/dev/null 2>&1 || true
+      claude plugin install "$plugin" >/dev/null 2>&1 || true
+      if ! claude plugin update "$plugin"; then warn "claude: $plugin update failed"; failed=1; fi
+    else
+      targets+=(claude-code)
+    fi
+  fi
+
+  (( ${#targets[@]} > 0 )) || continue
+  $has_npx || { failed=1; continue; }
+  say "$repo → ${targets[*]}"
+  args=()
+  for a in "${targets[@]}"; do args+=(-a "$a"); done
+  # add installs or replaces each skill with the pack's current version.
+  if ! npx -y "$cli" add "$repo" -g "${args[@]}" --skill '*' -y; then
+    warn "skills: $repo failed for ${targets[*]}"; failed=1
+  fi
+done <"$conf"
+
+(( failed == 0 )) && say "done; restart running agents to load new skills" || exit 1
