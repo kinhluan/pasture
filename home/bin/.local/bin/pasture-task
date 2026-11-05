@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# pasture-task — 🌱 one task, one worktree, one herdr workspace.
+#
+#   pasture-task <branch> [agent]   new worktree for <branch> (Worktrunk), a herdr
+#                                   workspace in it, and the pasture layout with
+#                                   <agent> (claude by default, or codex, grok, agy)
+#   pasture-task --done <branch>    close that workspace and remove the worktree
+#                                   (the branch is deleted only if merged)
+#
+# Run it from inside the repo. An existing branch gets a worktree; a new one is
+# created from the default branch. The workspace is named after the branch.
+set -euo pipefail
+
+die() { echo "pasture-task: $*" >&2; exit 1; }
+usage() { sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+
+[[ "${HERDR_ENV:-}" == "1" ]] || die "run me inside a herdr pane (start herdr first)"
+command -v wt >/dev/null || die "Worktrunk is not installed: brew install worktrunk"
+git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repo"
+
+# Path of the worktree checked out for a branch, from wt's JSON.
+path_of() {
+  wt list --format=json | jq -r --arg b "$1" \
+    '.items[] | select(.branch == $b) | .worktree.path // empty' | head -1
+}
+# herdr workspace whose panes sit in a directory (or below it).
+workspace_at() {
+  herdr pane list | jq -r --arg d "$1" \
+    '[.result.panes[] | select(.cwd == $d or (.cwd | startswith($d + "/")))][0].workspace_id // empty'
+}
+
+if [[ "${1:-}" == "--done" ]]; then
+  branch="${2:-}"; [[ -n "$branch" ]] || usage
+  path=$(path_of "$branch")
+  [[ -n "$path" ]] || die "no worktree for '$branch' (wt list shows them)"
+  ws=$(workspace_at "$path")
+  if [[ -n "$ws" ]]; then
+    # Closing the workspace ends any agent still running in it.
+    read -r -p "🌱 close herdr workspace $ws and remove $path? [y/N] " ok || exit 0
+    [[ "$ok" == [yY]* ]] || exit 0
+    herdr workspace close "$ws" >/dev/null
+  fi
+  wt remove "$branch"
+  exit 0
+fi
+
+branch="${1:-}"; [[ -n "$branch" && "$branch" != -* ]] || usage
+agent="${2:-claude}"
+command -v "$agent" >/dev/null || die "agent '$agent' not installed"
+
+# Keep .worktrees/ out of `git status` without touching the repo's .gitignore:
+# info/exclude is local to this clone and shared by all its worktrees.
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+exclude="$common/info/exclude"
+if ! git check-ignore -q .worktrees/x 2>/dev/null; then
+  mkdir -p "$common/info"
+  printf '.worktrees/\n' >>"$exclude"
+  echo "🌱 added .worktrees/ to $exclude"
+fi
+root=$(git rev-parse --show-toplevel)
+if [[ -e "$root/MODULE.bazel" || -e "$root/WORKSPACE" || -e "$root/WORKSPACE.bazel" ]] \
+   && ! grep -qs '^\.worktrees' "$root/.bazelignore"; then
+  echo "⚠️  Bazel repo without .worktrees in .bazelignore: \`bazel build //...\` will walk into worktrees" >&2
+fi
+
+path=$(path_of "$branch")
+if [[ -z "$path" ]]; then
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    wt switch "$branch" --no-cd -y
+  else
+    wt switch -c "$branch" --no-cd -y
+  fi
+  path=$(path_of "$branch")
+fi
+[[ -n "$path" && -d "$path" ]] || die "Worktrunk made no worktree for '$branch'"
+
+ws=$(workspace_at "$path")
+if [[ -n "$ws" ]]; then
+  echo "🌱 $branch already has workspace $ws; going there"
+  herdr workspace focus "$ws" >/dev/null
+  exit 0
+fi
+
+ws=$(herdr workspace create --cwd "$path" --label "$branch" --focus | jq -r '.result.workspace.workspace_id')
+pane=$(herdr pane list | jq -r --arg w "$ws" '[.result.panes[] | select(.workspace_id == $w)][0].pane_id')
+[[ -n "$pane" && "$pane" != null ]] || die "herdr made workspace $ws but no pane"
+herdr pane run "$pane" "pasture-layout $agent" >/dev/null
+echo "🌱 $branch → $path (herdr workspace $ws, $agent)"

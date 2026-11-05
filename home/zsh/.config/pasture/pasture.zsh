@@ -6,8 +6,11 @@
 
 # PATH: ~/.local/bin holds pasture-* and starpls; the sonarqube-cli cask puts
 # `sonar` in its own bin dir. -U drops duplicate entries.
+# pnpm's and bun's global installs (`pnpm add -g`, `bun add -g`) go to their own
+# bin dirs, put on PATH here.
 typeset -U path
-path=("$HOME/.local/bin" "$HOME/.local/share/sonarqube-cli/bin" $path)
+export PNPM_HOME="$HOME/Library/pnpm"
+path=("$HOME/.local/bin" "$HOME/.local/share/sonarqube-cli/bin" "$PNPM_HOME" "$HOME/.bun/bin" $path)
 
 # Everything that opens an editor (git, gh, glab, Claude Code's ctrl+g) uses Helix.
 export EDITOR=hx VISUAL=hx
@@ -15,15 +18,22 @@ export EDITOR=hx VISUAL=hx
 # Completions for the CLIs pasture installs. Each prints a script that calls
 # `compdef` when sourced, so this needs compinit to have run already.
 if (( $+functions[compdef] )); then
-  for _pasture_cli in herdr gh glab; do
+  for _pasture_cli in herdr gh glab pnpm uv; do
     (( $+commands[$_pasture_cli] )) || continue
     case $_pasture_cli in
       herdr) source <(herdr completion zsh) ;;
+      pnpm)  source <(pnpm completion zsh) ;;
+      uv)    source <(uv generate-shell-completion zsh) ;;
       *)     source <($_pasture_cli completion -s zsh) ;;
     esac
   done
   unset _pasture_cli
 fi
+
+# Worktrunk: `wt switch` changes this shell's directory, which a binary can't
+# do on its own; the init defines a `wt` function (and completions) for that.
+# Instead of `wt config shell install`, which would edit ~/.zshrc.
+(( $+commands[wt] )) && eval "$(wt config shell init zsh)"
 
 # Prompt: starship replaces the oh-my-zsh theme. Sourced last, so it wins over
 # ZSH_THEME; set ZSH_THEME="" in ~/.zshrc to skip loading the unused theme.
