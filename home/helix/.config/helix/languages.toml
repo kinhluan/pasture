@@ -19,6 +19,9 @@ args = ["server"]
 [[language]]
 name = "starlark"
 language-servers = ["starpls"]
+# buildifier picks BUILD vs .bzl vs MODULE.bazel rules from the file name.
+# Off on save: a reformat in a shared BUILD file is a noisy diff; run :format.
+formatter = { command = "buildifier", args = ["-path=%{buffer_name}"] }
 auto-format = false
 
 [[language]]

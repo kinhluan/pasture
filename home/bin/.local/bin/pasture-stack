@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# pasture-stack — 🪜 the Sapling stack of the repo you are in (herdr popup on
+# ⌃⌥G, i.e. ctrl+alt+g). Works in any git repo or worktree, no `sl clone`.
+#
+#   pasture-stack [dir]    show the stack, then: w = open the stack UI in the
+#                          browser (sl web), Enter = close
+set -euo pipefail
+PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH
+
+dir="${1:-${HERDR_ACTIVE_PANE_CWD:-$PWD}}"
+cd "$dir" 2>/dev/null || { echo "pasture-stack: no such directory: $dir" >&2; exit 1; }
+
+hold() { read -r -p "${1:-Enter to close} " _ || true; }
+
+if ! command -v sl >/dev/null; then
+  echo "🪜 Sapling is not installed: brew install sapling (or ./setup.sh)"
+  hold; exit 0
+fi
+if ! root=$(sl root 2>/dev/null); then
+  echo "🪜 $dir is not inside a git or Sapling repo"
+  hold; exit 0
+fi
+
+echo "🪜 ${root##*/} · stack"
+echo
+# The `stack` alias comes from pasture's sapling.conf; fall back to the same
+# revset in case the config is not linked.
+sl --color always stack 2>/dev/null \
+  || sl --color always smartlog -r 'draft() & (::. + .::)' -T '{sl}'
+echo
+echo "  sl commit · sl prev/next · sl amend · sl absorb · sl push --to <branch>"
+echo
+read -r -p "🪜 w = open in browser (sl web), Enter = close: " pick || exit 0
+if [[ "$pick" == [wW]* ]]; then
+  sl web
+  hold
+fi

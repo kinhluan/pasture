@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # pasture-update — update every agent CLI listed in agents.conf, then print
-# a before → after table. `--all` also runs `brew bundle` for the Brewfile.
+# a before → after table. `--all` also runs `brew bundle` for the Brewfile
+# and refreshes the skill packs in skills.conf (pasture-skills).
 set -uo pipefail
 
 # Find the checkout from our own stow symlink (~/.local/bin/pasture-update →
@@ -70,6 +71,9 @@ main() {
   if [[ "${1:-}" == "--all" ]]; then
     printf '\n\033[1m==> brew bundle\033[0m\n'
     brew bundle --file="$PASTURE_DIR/Brewfile" || { rows+=("brew|-|-|FAIL"); FAILED+=(brew); }
+    printf '\n\033[1m==> skills\033[0m\n'
+    "$PASTURE_DIR/home/bin/.local/bin/pasture-skills" \
+      || { rows+=("skills|-|-|FAIL"); FAILED+=(skills); }
   fi
 
   printf '\n%-8s  %-40s  %-40s  %s\n' TOOL BEFORE AFTER STATUS
@@ -87,7 +91,7 @@ case "${1:-}" in
   "" | --all) main "$@" ;;
   -h | --help)
     echo "usage: pasture-update [--all]"
-    echo "  updates every tool in $CONF; --all also runs brew bundle"
+    echo "  updates every tool in $CONF; --all also runs brew bundle and pasture-skills"
     ;;
   *) echo "pasture-update: unknown option '$1' (try --help)" >&2; exit 2 ;;
 esac

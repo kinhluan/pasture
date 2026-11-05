@@ -193,5 +193,9 @@ say "herdr integrations"
 install_integrations
 link_plugins
 
+say "skill packs (skills.conf)"
+"$PASTURE_DIR/home/bin/.local/bin/pasture-skills" \
+  || warn "some skill packs failed; rerun pasture-skills"
+
 verify
 say "done — open Ghostty, run \`herdr\`, then \`pasture-layout\` inside a repo"
