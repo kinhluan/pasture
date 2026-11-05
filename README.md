@@ -35,8 +35,9 @@ and a 🐕 border collie watches the sheep for you.
 - **🐕 A collie for the flock:** Ghostty notifies you when an agent is done or
   waiting for you; `⌃⌥A` lands on it; a 🐕 marks it in the sidebar until you
   look; `⌃⌥S` shows every agent, the ones that need you first.
-- **👯 Writer + reviewer:** `pasture-duo` starts a writer next to a read-only
-  reviewer (Claude · Codex by default) and hands the writer a review-loop prompt.
+- **👯 Writer + reviewers:** `pasture-duo` starts a writer next to up to three
+  read-only reviewers (any of Claude, Codex, Grok, Antigravity) and hands the
+  writer a review-loop prompt: ask them all at once, merge, settle disagreements.
 - **🏷️ A sidebar that reads at a glance:** each project gets its type (🏗️ Bazel,
   ☕ Java, 🐍 Python, 🟢 Node…) and each agent its maker (🟠 Anthropic, 🟢 OpenAI,
   ⚫ xAI, 🔵 Google), kept fresh automatically.
@@ -98,7 +99,7 @@ Once per machine:
 | `herdr`                          | attach to the persistent session (agents keep running when you close Ghostty) |
 | `pasture-layout [agent]`         | shell · agent · lazygit in this tab; agent is `claude` (default), `codex`, `grok` or `agy` |
 | `PASTURE_TOP=0.7 pasture-layout` | taller top row; `PASTURE_LEFT=0.2` makes the shell narrower |
-| `pasture-duo [writer] [reviewer]`| writer + read-only reviewer (default claude · codex; reviewer: codex, claude or grok); the review-loop prompt is copied to the clipboard |
+| `pasture-duo [writer] [reviewer…]`| writer + 1–3 read-only reviewers, e.g. `pasture-duo claude codex grok agy` (default claude · codex); the review-loop prompt is copied to the clipboard |
 | `pasture-collie`                 | 🐕 the flock board; `--list` just prints it, `--jump` goes to the agent that needs you |
 | `pasture-icons`                  | re-tag the sidebar now (the `pasture.tags` plugin normally does it for you) |
 | `pasture-update`                 | update herdr, Claude Code, Codex, Grok Build, Antigravity; skips missing tools, keeps going on failure |
@@ -235,9 +236,11 @@ glab auth login --hostname <your gitlab host>
 - **pasture's own plugins run automatically** (see the table above). They only
   read pane and workspace info and write display metadata. Read them before
   linking.
-- `pasture-duo` starts the reviewer read-only (Codex `--sandbox read-only`,
-  Claude / Grok `--permission-mode plan`) and refuses reviewers without a
-  read-only mode.
+- `pasture-duo` starts every reviewer read-only. Only Codex's
+  (`--sandbox read-only`) is enforced by the OS; Claude and Grok
+  (`--permission-mode plan`) and Antigravity (`--mode plan --sandbox`) are
+  permission modes: an edit needs your approval, so deny it. The collie marks a
+  reviewer asking with a 🐕.
 
 ## 🚫 Not managed here
 

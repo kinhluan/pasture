@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# pasture-duo — watch two agents talk: a writer that edits code and a
-# read-only reviewer it consults through `herdr agent prompt`.
+# pasture-duo — a writer that edits code, consulting one or more read-only
+# reviewers through `herdr agent prompt` (hub and spoke: reviewers only ever
+# talk to the writer, never to each other).
 #
-#   ┌──────────────┬──────────────┐
-#   │  WRITER      │  REVIEWER    │   reviewer is started read-only and named,
-#   │              │  (read-only) │   so the writer can reach it by name
-#   ├──────────────┴──────────────┤
-#   │  lazygit (full width)       │
-#   └─────────────────────────────┘
+#   ┌──────────────┬───────────────┐
+#   │  WRITER      │  REVIEWER 1   │   every reviewer is started read-only
+#   │              ├───────────────┤   and named, so the writer can reach
+#   │              │  REVIEWER 2…  │   each one by name
+#   ├──────────────┴───────────────┤
+#   │  lazygit (full width)        │
+#   └──────────────────────────────┘
 #
 # Usage (inside a herdr pane, at the repo root):
-#   pasture-duo [writer] [reviewer]      default: claude codex
+#   pasture-duo [writer] [reviewer...]     default: claude codex
+#   pasture-duo claude codex grok agy      writer + three reviewers
 #
 # A ready-to-edit writer prompt (with the review loop rules) is copied to the
 # clipboard: paste it into the writer, replace <TASK>, send.
@@ -20,7 +23,9 @@
 set -euo pipefail
 
 writer="${1:-claude}"
-reviewer="${2:-codex}"
+shift || true
+reviewers=("$@")
+(( ${#reviewers[@]} > 0 )) || reviewers=(codex)
 top="${PASTURE_TOP:-0.7}"
 left="${PASTURE_LEFT:-0.5}"
 rounds="${PASTURE_DUO_ROUNDS:-2}"
@@ -29,61 +34,115 @@ die() { echo "pasture-duo: $*" >&2; exit 1; }
 
 [[ "${HERDR_ENV:-}" == "1" ]] || die "run me inside a herdr pane (start herdr first)"
 command -v "$writer" >/dev/null || die "writer '$writer' not installed"
-command -v "$reviewer" >/dev/null || die "reviewer '$reviewer' not installed"
+(( ${#reviewers[@]} <= 3 )) || die "at most 3 reviewers (each one costs tokens every round)"
 
-# Read-only mode per reviewer kind. The reviewer shares the writer's working
-# tree, so it must never edit; that is what makes one tree (no worktree) safe.
-case "$reviewer" in
-  codex)       ro_args=(--sandbox read-only) ;;
-  claude|grok) ro_args=(--permission-mode plan) ;;
-  agy)         die "agy has no read-only mode (--sandbox only restricts its terminal); use codex, claude or grok as reviewer" ;;
-  *)           die "unknown reviewer '$reviewer' (use codex, claude or grok)" ;;
-esac
+# Read-only mode per reviewer kind. Reviewers share the writer's working
+# tree, so they must never edit. Only codex's is enforced by the OS; the
+# "plan" modes are agent permission modes: an edit needs your approval, so
+# deny it (the collie marks a reviewer asking with a 🐕).
+ro_args_for() {
+  case "$1" in
+    codex)       RO=(--sandbox read-only) ;;
+    claude|grok) RO=(--permission-mode plan) ;;
+    agy)         RO=(--mode plan --sandbox) ;;
+    *)           die "unknown reviewer '$1' (use codex, claude, grok or agy)" ;;
+  esac
+}
+icon_for() {
+  case "$1" in claude) echo "🤖" ;; codex) echo "🧠" ;; grok) echo "⚡" ;; agy) echo "🪐" ;; *) echo "🐑" ;; esac
+}
+for r in "${reviewers[@]}"; do
+  ro_args_for "$r"                       # validates the kind
+  command -v "$r" >/dev/null || die "reviewer '$r' not installed"
+done
 
-# herdr agent names are how the writer addresses the reviewer. They must be
-# unique and match [a-z][a-z0-9_-]{0,31}, so: review-<repo>-<calling pane>.
-# The pane suffix keeps two duos apart even in same-named checkouts.
+# herdr agent names are how the writer addresses reviewers. They must be
+# unique and match [a-z][a-z0-9_-]{0,31}: rv-<repo>-<kind>-<calling pane>.
 slug() { tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9\n' '-'; }
-pane=$(printf '%s' "${HERDR_PANE_ID:-x}" | slug)
+pane_slug=$(printf '%s' "${HERDR_PANE_ID:-x}" | slug)
 repo=$(basename "$PWD" | slug)
-max=$(( 32 - ${#pane} - 8 ))   # 8 = "review-" + "-"
-name="review-${repo:0:max}-$pane"
 
 new_pane() { herdr pane split "$@" --cwd "$PWD" --no-focus | jq -r '.result.pane.pane_id'; }
+label() { herdr pane rename "$1" "$2" >/dev/null 2>&1 || true; }
 
-# Same order as pasture-layout: bottom first so lazygit spans the full width.
+# Bottom first so lazygit spans the full width, then the reviewer column.
 below=$(new_pane --current --direction down --ratio "$top")
-right=$(new_pane --current --direction right --ratio "$left")
-
+column=$(new_pane --current --direction right --ratio "$left")
 herdr pane run "$below" lazygit >/dev/null
+label "$below" "🌿 lazygit"
+label "${HERDR_PANE_ID:-}" "$(icon_for "$writer") $writer · writer"
 
-echo "pasture-duo: starting $reviewer as '$name' (read-only)…"
-if ! herdr agent start "$name" --kind "$reviewer" --pane "$right" --timeout 120000 \
-     -- "${ro_args[@]}" >/dev/null; then
-  die "could not start $reviewer in pane $right — check it there (login? trust prompt?)"
-fi
+# Stack reviewers in the right column with equal heights: the k-th split of
+# the remaining space keeps 1/(remaining) of it.
+n=${#reviewers[@]}
+panes=("$column")
+for (( k = 1; k < n; k++ )); do
+  keep=$(awk -v r=$(( n - k + 1 )) 'BEGIN { printf "%.4f", 1 / r }')
+  panes+=("$(new_pane --pane "${panes[$((k - 1))]}" --direction down --ratio "$keep")")
+done
+
+names=()
+for (( k = 0; k < n; k++ )); do
+  kind="${reviewers[$k]}"
+  ro_args_for "$kind"
+  max=$(( 32 - ${#pane_slug} - ${#kind} - 5 ))   # 5 = "rv-" + 2 × "-"
+  name="rv-${repo:0:max}-$kind-$pane_slug"
+  names+=("$name")
+  echo "pasture-duo: starting $kind as '$name' (read-only)…"
+  if ! herdr agent start "$name" --kind "$kind" --pane "${panes[$k]}" --timeout 120000 \
+       -- "${RO[@]}" >/dev/null; then
+    die "could not start $kind in pane ${panes[$k]}; check it there (login? trust prompt?)"
+  fi
+  label "${panes[$k]}" "$(icon_for "$kind") $kind · review"
+done
+
+# The commands the writer runs, one block per reviewer.
+ask=""
+read_back=""
+for name in "${names[@]}"; do
+  ask+="  herdr agent prompt $name \"Review the current uncommitted changes (git diff) for: <TASK>. Report only actionable findings: file:line, problem, why. No style nits.\" --wait --timeout 600000 &
+"
+  read_back+="  herdr agent read $name --source recent-unwrapped --lines 200
+"
+done
+roster=$(printf '"%s" ' "${names[@]}")
+roster="${roster% }"
+
+# How the writer settles disagreements between reviewers. This is a working
+# agreement, not code: edit it to taste.
+read -r -d '' verdict_rules <<'EOF' || true
+- Safety first: a finding about security, data loss or a broken build is
+  fixed even if only one reviewer raised it.
+- Otherwise the majority decides: fix what most reviewers agree on.
+- A tie, or a finding you think is wrong but a reviewer insists on in the
+  next round: stop and ask me, quoting both sides.
+EOF
 
 # read -d '' instead of $(cat <<EOF): macOS /bin/bash 3.2 misparses quotes in
 # a heredoc nested in command substitution.
 read -r -d '' prompt <<EOF || true
 <TASK>
 
-When the change is ready, get a review from the read-only agent "$name":
+When the change is ready, get a review from the read-only reviewers $roster.
+Ask them all at once, wait for every one, then read each answer:
 
-  herdr agent prompt $name "Review the current uncommitted changes (git diff) for: <TASK>. Report only actionable findings: file:line, problem, why. No style nits." --wait --timeout 600000
-  herdr agent read $name --source recent-unwrapped --lines 200
-
+$ask  wait
+$read_back
 Rules:
-- Fix findings you agree with. For ones you reject, send $name your reasoning in the next prompt.
-- At most $rounds review rounds, then stop and summarize for me: what changed, what was fixed, what you disagreed with.
-- If a herdr command returns agent_blocked, agent_prompt_stalled or times out, do NOT resend blindly:
-  run "herdr agent get $name" and "herdr agent read $name" first; resend only if it is idle and never got the message, else ask me.
-- Never answer approval dialogs of $name yourself.
+- Merge the findings: drop duplicates, note which reviewers raised each one.
+$verdict_rules
+- For findings you reject, send that reviewer your reasoning in the next round.
+- At most $rounds review rounds, then stop and summarize for me: what changed,
+  what was fixed (and who found it), what you disagreed with.
+- If a herdr command returns agent_blocked, agent_prompt_stalled or times out,
+  do NOT resend blindly: run "herdr agent get <name>" and "herdr agent read
+  <name>" first; resend only if it is idle and never got the message, else ask me.
+- Never answer approval dialogs of any reviewer yourself.
 EOF
 
 if command -v pbcopy >/dev/null; then
   printf '%s\n' "$prompt" | pbcopy
-  echo "pasture-duo: writer prompt copied to clipboard — paste it, replace <TASK>, send."
+  echo "pasture-duo: writer prompt copied to clipboard; paste it, replace <TASK>, send."
 else
   printf '\n%s\n\n' "$prompt"
 fi
