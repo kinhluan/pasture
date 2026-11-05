@@ -1,0 +1,15 @@
+# Worktrunk (wt) — https://worktrunk.dev, `wt config create` prints every option.
+# One git worktree per task, so parallel agents never share a working copy.
+# pasture-task wraps it: worktree + herdr workspace + pasture layout.
+
+# Worktrees live inside the repo, in .worktrees/<branch> (feature/a-b becomes
+# feature-a-b): one place per repo instead of siblings all over ~/code.
+# The repo must ignore it: pasture-task adds `.worktrees/` to the repo's local
+# .git/info/exclude, and in a Bazel repo it belongs in .bazelignore too, or
+# `bazel build //...` walks into every worktree.
+worktree-path = "{{ repo_path }}/.worktrees/{{ branch | sanitize }}"
+
+# `wt merge` merges locally into the default branch (squash, rebase, remove).
+# That suits solo repos; where changes go through merge requests, push the
+# branch and open the MR instead, then `wt remove` once it has landed (it only
+# deletes the branch when it is merged).
