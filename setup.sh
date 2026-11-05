@@ -166,6 +166,17 @@ verify() {
   [[ -x "$HOME/.local/share/sonarqube-cli/bin/sonar" ]] || warn "sonar (sonarqube-cli) missing: brew install --cask sonarqube-cli"
   grep -qs 'pasture/pasture.zsh' "$HOME/.zshrc" \
     || warn "add to the end of ~/.zshrc: source ~/.config/pasture/pasture.zsh"
+  # Two installs of one tool: the first on PATH wins and the other goes stale.
+  local tool first
+  for tool in uv pnpm bun; do
+    first=$(command -v "$tool" 2>/dev/null) || continue
+    [[ "$first" == "$(brew --prefix)/bin/$tool" ]] && continue
+    case "$first" in
+      "$HOME/.local/bin/"*) warn "$tool at $first (standalone installer) shadows Homebrew's; remove it: rm ~/.local/bin/${tool} ~/.local/bin/${tool}x" ;;
+      *"/.nvm/"*)           warn "$tool at $first (npm global) shadows Homebrew's; remove it: npm rm -g $tool" ;;
+      *)                    warn "$tool at $first shadows Homebrew's" ;;
+    esac
+  done
   local fonts=("$HOME"/Library/Fonts/*[Hh]erdr*)
   if ! fc-list 2>/dev/null | grep -q "Herdr Agent Icons Max" && [[ ! -e "${fonts[0]}" ]]; then
     warn "font 'Herdr Agent Icons Max' missing — install the herdr-radar plugin or agent icons render as boxes"

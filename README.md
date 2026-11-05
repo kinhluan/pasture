@@ -28,6 +28,9 @@ setup, plus a few small scripts and a 🐕 border collie that watches the agents
 - **👯 Writer and reviewers.** `pasture-duo` starts one writer and up to three
   read-only reviewers (any mix of the four agents) and hands the writer a
   review-loop prompt.
+- **🌱 One task, one worktree.** `pasture-task <branch> [agent]` makes a git
+  worktree with [Worktrunk](https://worktrunk.dev), opens a herdr workspace in
+  it and sets up the layout, so parallel agents never share a working copy.
 - **🪜 Stacked commits.** Sapling runs inside your existing git repos and
   worktrees; `⌃⌥G` shows the stack you are on.
 - **📚 One set of skills for every agent.** `pasture-skills` installs the
@@ -36,6 +39,8 @@ setup, plus a few small scripts and a 🐕 border collie that watches the agents
 - **🌐 A browser every agent can drive.** [agent-browser](https://agent-browser.dev)
   lets any agent with a shell open, click, fill and screenshot pages, including
   the JS-rendered and logged-in ones a plain fetch can't read.
+  [agent-desktop](https://github.com/vercel-labs/agent-desktop) does the same
+  for native Mac apps, once you allow it.
 - **🏷️ A sidebar that reads at a glance.** Each project is tagged with its type
   (🏗️ Bazel, ☕ Java, 🐍 Python, 🟢 Node…) and each agent with its maker
   (🟠 Anthropic, 🟢 OpenAI, ⚫ xAI, 🔵 Google), kept fresh by a herdr plugin.
@@ -93,8 +98,9 @@ Once per machine:
 | Group | Tools |
 | ----- | ----- |
 | Core | `stow`, `jq`, `helix`, `lazygit`, `starship` |
-| Version control | `sapling` (`sl`), `gh`, `glab` |
-| Agents' tools | `agent-browser`, `sonarqube-cli` (`sonar`) |
+| Version control | `worktrunk` (`wt`), `sapling` (`sl`), `gh`, `glab` |
+| JS and Python | `pnpm`, `bun`, `uv` (Node itself is yours: nvm, fnm or brew) |
+| Agents' tools | `agent-browser`, `agent-desktop`, `sonarqube-cli` (`sonar`) |
 | Editors | Visual Studio Code, Antigravity IDE (an app you already installed by hand is adopted, not reinstalled) |
 | Bazel | `bazelisk` (as `bazel`; runs the version in each repo's `.bazelversion`), `buildifier` |
 | Language servers | `jdtls`, `pyright`, `ruff`, `marksman`, `taplo`, `yaml-language-server`, plus `starpls` from setup.sh |
@@ -110,6 +116,7 @@ The editors update themselves, so `brew upgrade` leaves them alone.
 | `pasture-layout [agent]` | shell, agent and lazygit in this tab; agent is `claude` (default), `codex`, `grok` or `agy` |
 | `pasture-duo [writer] [reviewer…]` | a writer and 1–3 read-only reviewers, e.g. `pasture-duo claude codex grok agy` (default: claude, codex) |
 | `pasture-collie` | 🐕 the flock board; `--list` only prints it, `--jump` goes to the agent that needs you, `--sweep` quits idle agents |
+| `pasture-task <branch> [agent]` | 🌱 new worktree for the branch, a herdr workspace in it, the layout with the agent; `--done <branch>` closes and removes it |
 | `pasture-skills` | 📚 install or update the skill packs for every agent; `--list` shows what each has |
 | `pasture-stack [dir]` | 🪜 the Sapling stack of a repo |
 | `pasture-icons` | re-tag the sidebar now (the plugin normally does it) |
@@ -181,6 +188,31 @@ broken-build finding is fixed even if only one reviewer raised it; otherwise the
 majority decides; a tie goes to you. Reviewers only talk to the writer, never
 to each other. `PASTURE_DUO_ROUNDS` caps the rounds (default 2).
 
+## 🌱 One task, one worktree
+
+Two agents in one working copy step on each other: one's edits land in the
+other's diff, builds and tests run on a mix. Each parallel task gets its own
+git worktree instead, managed by [Worktrunk](https://worktrunk.dev) (`wt`):
+
+```bash
+pasture-task feature/PROJ-1234-login codex   # worktree + herdr workspace + layout
+pasture-task feature/PROJ-1240-report        # a second task, claude by default
+wt list                                      # every worktree, with status
+pasture-task --done feature/PROJ-1234-login  # after it merged: close and remove
+```
+
+Worktrees go to `.worktrees/<branch>` inside the repo
+(`home/worktrunk/.config/worktrunk/config.toml`). `pasture-task` adds
+`.worktrees/` to the repo's local `.git/info/exclude`, so `git status` stays
+clean, and warns when a Bazel repo lacks it in `.bazelignore`. The herdr
+workspace is named after the branch, so the sidebar and the collie's board
+show which task each agent is on.
+
+`wt switch <branch>` jumps between worktrees in the shell (pasture.zsh loads its
+shell integration). `wt merge` merges locally into the default branch; where
+changes go through merge requests, push and open one instead, and run
+`pasture-task --done` once it has landed: the branch is deleted only if merged.
+
 ## 🪜 Stacks with Sapling
 
 Sapling (`sl`) works inside any git repo or git worktree as it is: no `sl clone`,
@@ -205,7 +237,8 @@ Sapling's browser UI (`sl web`).
 - **GitLab.** `sl pr` (stacked pull requests) is GitHub only. On GitLab, push
   each step to its own branch and open the merge requests with `glab`.
 - **Parallel work.** A stack is a sequence in one working copy. Two tasks at the
-  same time still need one git worktree each.
+  same time need a worktree each (`pasture-task`); each worktree has its own
+  stack.
 
 ## 📚 Skills for every agent
 
@@ -214,7 +247,10 @@ a task matches. pasture keeps one set for all agents, listed in
 [`skills.conf`](skills.conf). The default pack is
 **[The Art of Agent Skills](https://github.com/kinhluan/skills)**
 (`kinhluan/skills`, plugin `kinhluan-skills`): software delivery, architecture
-(C4, DDD, ADRs), security, product, and academic research.
+(C4, DDD, ADRs), security, product, and academic research. Its `pasture` skill teaches
+agents this setup: which pasture tool fits which task (worktrees, stacks,
+herdr, the browser and desktop tools) and the shared rules, such as never
+answering another agent's approval dialog.
 
 ```text
 kinhluan/skills | kinhluan-skills@kinhluan
@@ -256,6 +292,44 @@ Agents learn the full tool with `agent-browser skills get core`. Pointed at a
 logged-in browser profile, an agent can do anything you can on those sites;
 use a separate profile for anything sensitive.
 
+## 📦 pnpm, bun and uv
+
+All three come from Homebrew and update with `pasture-update --all`.
+`pasture.zsh` puts their global bin dirs on PATH (`~/Library/pnpm` for
+`pnpm add -g`, `~/.bun/bin`; uv tools land in `~/.local/bin`) and loads
+completions for pnpm and uv. Their stores and caches are shared by default, so
+the worktrees of one repo reuse downloads.
+
+- **One copy of each.** A second install, such as uv's standalone installer in
+  `~/.local/bin` or a pnpm from `npm i -g`, comes first on PATH and goes stale.
+  `setup.sh` warns and prints the command that removes it.
+- **pnpm versions per repo.** Homebrew's pnpm is the newest major. A repo that
+  needs an older one should pin it in `package.json`
+  (`"packageManager": "pnpm@10.28.1"`); pnpm then runs that version there.
+  Check before removing an older global pnpm, since a newer pnpm may rewrite an
+  old lockfile.
+- **No registry logins here.** `~/.npmrc` and private Python indexes hold
+  tokens; they stay on the machine, never in this repo.
+
+## 🖥️ Agents and the desktop
+
+[agent-desktop](https://github.com/vercel-labs/agent-desktop) is agent-browser
+for native apps: it reads an app's accessibility tree (no screenshots, no
+pixel matching) and acts on refs.
+
+```bash
+agent-desktop snapshot --app Finder -i   # interactive elements, each with a ref
+agent-desktop click @s8f3k2p9:e8         # refs belong to that snapshot
+agent-desktop skills get desktop         # the guide agents should read first
+```
+
+It does nothing until macOS allows it, and that permission goes to the app it
+runs in: **Ghostty**. Granting Ghostty Accessibility (and Screen Recording, for
+screenshots) lets every shell and every agent in Ghostty read and operate
+every app on your Mac. Run `agent-desktop permissions --guide` only if you want
+that, and consider revoking it when you are done. Snapshots can contain
+private content from other apps; keep them out of logs and uploads.
+
 ## 🎨 Colors and emoji
 
 Ghostty's palette is the single source: Helix uses `base16_terminal`, herdr its
@@ -278,7 +352,8 @@ is needed (herdr's agent-state icons still use the herdr-radar font, which
 ## 🐚 Shell
 
 pasture does not own `~/.zshrc`. It ships `~/.config/pasture/pasture.zsh`
-(PATH, `EDITOR=hx`, completions for herdr, gh and glab, the starship prompt).
+(PATH, `EDITOR=hx`, completions for herdr, gh and glab, Worktrunk's shell
+integration, the starship prompt).
 Add one line at the **end** of `~/.zshrc`, after oh-my-zsh or `compinit`:
 
 ```zsh
@@ -303,9 +378,10 @@ they run from this clone. The root holds `setup.sh`, `Brewfile`,
 | `helix` | `~/.config/helix/{config,languages}.toml` |
 | `lazygit` | `~/.config/lazygit/config.yml` |
 | `starship` | `~/.config/starship.toml` |
+| `worktrunk` | `~/.config/worktrunk/config.toml` |
 | `sapling` | `~/Library/Preferences/sapling/sapling.conf` |
 | `zsh` | `~/.config/pasture/pasture.zsh` |
-| `bin` | `~/.local/bin/pasture-{layout,duo,collie,stack,skills,icons,update}` |
+| `bin` | `~/.local/bin/pasture-{layout,task,duo,collie,stack,skills,icons,update}` |
 
 | Plugin | Runs on | Does |
 | ------ | ------- | ---- |
@@ -358,8 +434,9 @@ herdr config check
 
 [herdr](https://herdr.dev) · [Ghostty](https://ghostty.org) ·
 [Helix](https://helix-editor.com) · [lazygit](https://github.com/jesseduffield/lazygit) ·
-[starship](https://starship.rs) · [Sapling](https://sapling-scm.com) ·
-[agent-browser](https://agent-browser.dev) · [GNU Stow](https://www.gnu.org/software/stow/)
+[starship](https://starship.rs) · [Worktrunk](https://worktrunk.dev) ·
+[Sapling](https://sapling-scm.com) · [agent-browser](https://agent-browser.dev) ·
+[agent-desktop](https://github.com/vercel-labs/agent-desktop) · [GNU Stow](https://www.gnu.org/software/stow/)
 
 ## 📄 License
 

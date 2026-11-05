@@ -9,10 +9,27 @@ brew "lazygit"
 brew "starship"   # prompt; config in home/starship
 brew "sapling"    # `sl`: stacked commits inside any git repo; config in home/sapling
 
+# JavaScript and Python toolchains. Caches and stores are shared by default
+# (pnpm's content-addressed store, uv's cache), so ten worktrees of one repo
+# don't download ten copies. Node itself is left to you (nvm, fnm, brew node).
+# Registry logins (~/.npmrc, private indexes) stay out of this repo: they hold
+# tokens. One copy of each: setup.sh warns when another install shadows these.
+brew "pnpm"
+brew "uv"
+brew "bun"
+
+# Worktrunk (`wt`): one git worktree per task, so parallel agents never share
+# a working copy; config in home/worktrunk, wrapped by pasture-task.
+brew "worktrunk"
+
 # Browser for agents (any of them, through bash): open, snapshot -i (compact
 # @e refs), click/fill, screenshot. For pages a plain fetch can't read:
 # JS-rendered, behind a login, or needing clicks. First run downloads Chrome.
 brew "agent-browser"
+# The same for native macOS apps, through the accessibility tree. Does nothing
+# until you grant Ghostty Accessibility (and Screen Recording for screenshots);
+# see README "Agents and the desktop" before you do.
+brew "agent-desktop"
 
 # Editors whose agents (Claude Code / Codex extensions, Antigravity's agent)
 # share the CLIs' skills and can reach herdr panes too. adopt: an app already
