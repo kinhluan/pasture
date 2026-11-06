@@ -9,9 +9,13 @@ brew "lazygit"
 brew "starship"   # prompt; config in home/starship
 brew "sapling"    # `sl`: stacked commits inside any git repo; config in home/sapling
 
+# Node through fnm: fast, reads .nvmrc / .node-version and switches on cd.
+# setup.sh installs the newest LTS as the default; pasture-update keeps it new.
+brew "fnm"
+
 # JavaScript and Python toolchains. Caches and stores are shared by default
 # (pnpm's content-addressed store, uv's cache), so ten worktrees of one repo
-# don't download ten copies. Node itself is left to you (nvm, fnm, brew node).
+# don't download ten copies.
 # Registry logins (~/.npmrc, private indexes) stay out of this repo: they hold
 # tokens. One copy of each: setup.sh warns when another install shadows these.
 brew "pnpm"

@@ -103,7 +103,7 @@ Once per machine:
 | ----- | ----- |
 | Core | `stow`, `jq`, `helix`, `lazygit`, `starship` |
 | Version control | `worktrunk` (`wt`), `sapling` (`sl`), `gh`, `glab` |
-| JS and Python | `pnpm`, `bun`, `uv` (Node itself is yours: nvm, fnm or brew) |
+| JS and Python | `fnm` (Node), `pnpm`, `bun`, `uv` |
 | Java | Eclipse Temurin 21, `maven` (Rust comes from rustup, not Homebrew) |
 | Agents' tools | `agent-browser`, `agent-desktop`, `sonarqube-cli` (`sonar`) |
 | Editors | Visual Studio Code, Antigravity IDE (an app you already installed by hand is adopted, not reinstalled) |
@@ -342,12 +342,21 @@ use a separate profile for anything sensitive.
   (it is listed in `agents.conf`), `setup.sh` adds the `rust-analyzer`
   component for Helix, and `pasture.zsh` puts `~/.cargo/bin` on PATH.
 
-## 📦 pnpm, bun and uv
+## 📦 Node, pnpm, bun and uv
 
-All three come from Homebrew and update with `pasture-update --all`.
+**Node** comes through [fnm](https://github.com/Schniz/fnm). `setup.sh` installs
+the newest LTS as the default and `pasture-update` keeps it current. In a
+project with `.nvmrc` or `.node-version` (looked up from the current directory
+upwards, or `engines.node` in `package.json`), fnm switches to that version on
+`cd` and offers to install it if missing. fnm is loaded after `~/.zshrc`, so it
+wins over an nvm loaded there; `setup.sh` reminds you to remove nvm's lines,
+which slow every new shell. Pin Node per project with a `.nvmrc` rather than
+relying on the default.
+
+pnpm, bun and uv come from Homebrew and update with `pasture-update --all`.
 `pasture.zsh` puts their global bin dirs on PATH (`~/Library/pnpm` for
 `pnpm add -g`, `~/.bun/bin`; uv tools land in `~/.local/bin`) and loads
-completions for pnpm and uv. Their stores and caches are shared by default, so
+completions for pnpm, uv and fnm. Their stores and caches are shared by default, so
 the worktrees of one repo reuse downloads.
 
 - **One copy of each.** A second install, such as uv's standalone installer in
