@@ -10,7 +10,34 @@
 # bin dirs, put on PATH here.
 typeset -U path
 export PNPM_HOME="$HOME/Library/pnpm"
-path=("$HOME/.local/bin" "$HOME/.local/share/sonarqube-cli/bin" "$PNPM_HOME" "$HOME/.bun/bin" $path)
+path=("$HOME/.local/bin" "$HOME/.local/share/sonarqube-cli/bin" "$PNPM_HOME" "$HOME/.bun/bin"
+      "$HOME/.cargo/bin" $path)
+
+# Node: fnm puts the project's version (.nvmrc / .node-version, searched up
+# from the current directory) first on PATH and switches on cd; elsewhere the
+# default (newest LTS). Loaded after ~/.zshrc, so it wins over an nvm loaded
+# there; drop nvm's lines from ~/.zshrc to save its startup time.
+if (( $+commands[fnm] )); then
+  eval "$(fnm env --use-on-cd --version-file-strategy=recursive --resolve-engines --shell zsh)"
+fi
+
+# Rust: compile through sccache, so every worktree and repo shares one cache
+# of built crates (a fresh `pasture-task` worktree does not rebuild them all).
+# Not a shared CARGO_TARGET_DIR: worktrees would lock and overwrite each other.
+(( $+commands[sccache] )) && export RUSTC_WRAPPER=sccache
+
+# Java: JDK 21 unless JAVA_HOME is already set; `jdk <version>` switches this
+# shell (`jdk` alone lists what is installed).
+if [[ -z "${JAVA_HOME:-}" ]] && /usr/libexec/java_home -v 21 >/dev/null 2>&1; then
+  export JAVA_HOME="$(/usr/libexec/java_home -v 21)"
+fi
+jdk() {
+  if [[ -z "${1:-}" ]]; then /usr/libexec/java_home -V; return; fi
+  local home
+  home="$(/usr/libexec/java_home -v "$1")" || return
+  export JAVA_HOME="$home"
+  java -version 2>&1 | head -1
+}
 
 # Everything that opens an editor (git, gh, glab, Claude Code's ctrl+g) uses Helix.
 export EDITOR=hx VISUAL=hx
@@ -18,12 +45,13 @@ export EDITOR=hx VISUAL=hx
 # Completions for the CLIs pasture installs. Each prints a script that calls
 # `compdef` when sourced, so this needs compinit to have run already.
 if (( $+functions[compdef] )); then
-  for _pasture_cli in herdr gh glab pnpm uv; do
+  for _pasture_cli in herdr gh glab pnpm uv fnm; do
     (( $+commands[$_pasture_cli] )) || continue
     case $_pasture_cli in
       herdr) source <(herdr completion zsh) ;;
       pnpm)  source <(pnpm completion zsh) ;;
       uv)    source <(uv generate-shell-completion zsh) ;;
+      fnm)   source <(fnm completions --shell zsh) ;;
       *)     source <($_pasture_cli completion -s zsh) ;;
     esac
   done

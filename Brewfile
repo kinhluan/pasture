@@ -9,14 +9,34 @@ brew "lazygit"
 brew "starship"   # prompt; config in home/starship
 brew "sapling"    # `sl`: stacked commits inside any git repo; config in home/sapling
 
+# Node through fnm: fast, reads .nvmrc / .node-version and switches on cd.
+# setup.sh installs the newest LTS as the default; pasture-update keeps it new.
+brew "fnm"
+
 # JavaScript and Python toolchains. Caches and stores are shared by default
 # (pnpm's content-addressed store, uv's cache), so ten worktrees of one repo
-# don't download ten copies. Node itself is left to you (nvm, fnm, brew node).
+# don't download ten copies.
 # Registry logins (~/.npmrc, private indexes) stay out of this repo: they hold
 # tokens. One copy of each: setup.sh warns when another install shadows these.
 brew "pnpm"
 brew "uv"
 brew "bun"
+
+# Java: Eclipse Temurin 21 (LTS, free to use at work, unlike older Oracle JDK
+# builds) and Maven. pasture.zsh points JAVA_HOME at 21 unless you set it, and
+# `jdk 17` switches the current shell. Other versions: cask "temurin@17" etc.
+# Rust is not here: rustup (https://rustup.rs) installs and updates itself;
+# pasture-update runs `rustup update`, setup.sh adds rust-analyzer.
+cask "temurin@21"
+brew "maven"
+
+# Rust tools around Cargo (Cargo itself comes with rustup). Prebuilt here, so
+# no compiling them; none pulls in Homebrew's own Rust.
+brew "sccache"          # shared compile cache: new worktrees reuse built crates
+brew "cargo-nextest"    # faster test runner, compact output
+brew "cargo-deny"       # advisories (RustSec), licenses, sources, duplicates
+brew "cargo-edit"       # cargo upgrade: bump versions in Cargo.toml, majors too
+brew "cargo-binstall"   # install other cargo tools as binaries, not from source
 
 # Worktrunk (`wt`): one git worktree per task, so parallel agents never share
 # a working copy; config in home/worktrunk, wrapped by pasture-task.

@@ -1,0 +1,94 @@
+#!/usr/bin/env bash
+# pasture — one entry point to a library of tested scripts for the local CLIs
+# (herdr, git, sl, glab, agent-browser…), so agents run a known command instead
+# of writing a new script each time.
+#
+#   pasture help [group [command]]   what exists, with summary and safety
+#   pasture list --json              the same, for agents
+#   pasture <group> <command> [args] run one
+#
+# Commands are executable files <group>/<command> under, in order:
+#   ~/.config/pasture/cmds.local/   yours, not committed (wins on a clash)
+#   <pasture repo>/cmds/            pasture's own
+# Each starts with a header that `help` reads:
+#   # summary: one line
+#   # usage:   pasture <group> <command> …
+#   # safety:  read | write | external
+# read     only reads; run freely
+# write    changes local state (files, git, panes); supports --dry-run
+# external touches other systems (GitLab, force-push, agents' state); prints
+#          its plan and acts only with --yes, so ask the user first
+set -euo pipefail
+
+repo_dir() {
+  local self
+  self=$(readlink "$0" 2>/dev/null || echo "$0")
+  [[ "$self" == /* ]] || self="$(dirname "$0")/$self"
+  cd "$(dirname "$self")/../../../.." && pwd
+}
+PASTURE_DIR="${PASTURE_DIR:-$(repo_dir)}"
+export PASTURE_DIR
+ROOTS=("$HOME/.config/pasture/cmds.local" "$PASTURE_DIR/cmds")
+
+field() { sed -n "s/^# $2: *//p" "$1" | head -1; }
+
+# Every command once, local first: "group<TAB>command<TAB>path".
+all_cmds() {
+  local root f rel seen=" "
+  for root in "${ROOTS[@]}"; do
+    [[ -d "$root" ]] || continue
+    for f in "$root"/*/*; do
+      [[ -f "$f" && -x "$f" ]] || continue
+      rel="${f#"$root"/}"
+      [[ "$seen" == *" $rel "* ]] && continue
+      seen+="$rel "
+      printf '%s\t%s\t%s\n' "${rel%%/*}" "${rel#*/}" "$f"
+    done
+  done | sort
+}
+
+find_cmd() {
+  local root
+  for root in "${ROOTS[@]}"; do
+    [[ -f "$root/$1/$2" && -x "$root/$1/$2" ]] && { echo "$root/$1/$2"; return 0; }
+  done
+  return 1
+}
+
+help() {
+  local g="${1:-}" c="${2:-}" path
+  if [[ -n "$c" ]]; then
+    path=$(find_cmd "$g" "$c") || { echo "pasture: no command '$g $c'" >&2; exit 2; }
+    sed -n '2,/^[^#]/p' "$path" | sed '$d' | sed 's/^# \{0,1\}//'
+    return
+  fi
+  echo "pasture <group> <command> [args]   ·   pasture help <group> <command>"
+  echo
+  local group cmd last=""
+  while IFS=$'\t' read -r group cmd path; do
+    [[ -z "$g" || "$group" == "$g" ]] || continue
+    [[ "$group" != "$last" ]] && { echo "$group"; last="$group"; }
+    printf '  %-10s %-10s %s\n' "$cmd" "[$(field "$path" safety)]" "$(field "$path" summary)"
+  done < <(all_cmds)
+}
+
+list_json() {
+  local group cmd path
+  while IFS=$'\t' read -r group cmd path; do
+    jq -n --arg g "$group" --arg c "$cmd" --arg p "$path" \
+      --arg s "$(field "$path" summary)" --arg u "$(field "$path" usage)" \
+      --arg x "$(field "$path" safety)" \
+      '{group:$g, command:$c, summary:$s, usage:$u, safety:$x, path:$p}'
+  done < <(all_cmds) | jq -s .
+}
+
+case "${1:-help}" in
+  help|-h|--help) shift || true; help "$@" ;;
+  list) if [[ "${2:-}" == --json ]]; then list_json; else help; fi ;;
+  *)
+    [[ $# -ge 2 ]] || { help "$1"; exit 2; }
+    path=$(find_cmd "$1" "$2") || { echo "pasture: no command '$1 $2' (pasture help)" >&2; exit 2; }
+    shift 2
+    exec "$path" "$@"
+    ;;
+esac

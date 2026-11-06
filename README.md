@@ -36,6 +36,10 @@ setup, plus a few small scripts and a 🐕 border collie that watches the agents
 - **📚 One set of skills for every agent.** `pasture-skills` installs the
   packs in `skills.conf` into Claude Code, Codex, Grok and Antigravity alike;
   by default [The Art of Agent Skills](https://github.com/kinhluan/skills).
+- **🧰 Tested commands instead of one-off scripts.** `pasture <group> <command>`
+  is a small library of scripts for the local CLIs (herdr, git, Sapling,
+  glab, agent-browser) that agents run instead of writing their own, each
+  labelled read, write or external.
 - **🌐 A browser every agent can drive.** [agent-browser](https://agent-browser.dev)
   lets any agent with a shell open, click, fill and screenshot pages, including
   the JS-rendered and logged-in ones a plain fetch can't read.
@@ -99,7 +103,9 @@ Once per machine:
 | ----- | ----- |
 | Core | `stow`, `jq`, `helix`, `lazygit`, `starship` |
 | Version control | `worktrunk` (`wt`), `sapling` (`sl`), `gh`, `glab` |
-| JS and Python | `pnpm`, `bun`, `uv` (Node itself is yours: nvm, fnm or brew) |
+| JS and Python | `fnm` (Node), `pnpm`, `bun`, `uv` |
+| Java | Eclipse Temurin 21, `maven` |
+| Rust tools | `sccache`, `cargo-nextest`, `cargo-deny`, `cargo-edit`, `cargo-binstall` (Rust itself comes from rustup) |
 | Agents' tools | `agent-browser`, `agent-desktop`, `sonarqube-cli` (`sonar`) |
 | Editors | Visual Studio Code, Antigravity IDE (an app you already installed by hand is adopted, not reinstalled) |
 | Bazel | `bazelisk` (as `bazel`; runs the version in each repo's `.bazelversion`), `buildifier` |
@@ -116,6 +122,7 @@ The editors update themselves, so `brew upgrade` leaves them alone.
 | `pasture-layout [agent]` | shell, agent and lazygit in this tab; agent is `claude` (default), `codex`, `grok` or `agy` |
 | `pasture-duo [writer] [reviewer…]` | a writer and 1–3 read-only reviewers, e.g. `pasture-duo claude codex grok agy` (default: claude, codex) |
 | `pasture-collie` | 🐕 the flock board; `--list` only prints it, `--jump` goes to the agent that needs you, `--sweep` quits idle agents |
+| `pasture help` | 🧰 the command library: `pasture <group> <command>`, see below |
 | `pasture-task <branch> [agent]` | 🌱 new worktree for the branch, a herdr workspace in it, the layout with the agent; `--done <branch>` closes and removes it |
 | `pasture-skills` | 📚 install or update the skill packs for every agent; `--list` shows what each has |
 | `pasture-stack [dir]` | 🪜 the Sapling stack of a repo |
@@ -187,6 +194,38 @@ merge the findings and settle disagreements: a security, data-loss or
 broken-build finding is fixed even if only one reviewer raised it; otherwise the
 majority decides; a tie goes to you. Reviewers only talk to the writer, never
 to each other. `PASTURE_DUO_ROUNDS` caps the rounds (default 2).
+
+## 🧰 The pasture command library
+
+Agents tend to write a fresh shell script whenever they need to drive a CLI,
+each time a little differently. `pasture` gives them tested ones instead:
+
+```bash
+pasture help                         # every command, with its safety level
+pasture help mr stack                # usage and details of one
+pasture list --json                  # the same, for agents
+```
+
+| Command | Safety | Does |
+| ------- | ------ | ---- |
+| `pasture pane tail <pane> [--wait REGEX]` | read | another pane's recent output, or wait until a pattern appears |
+| `pasture web read <url>` | read | a page as text: plain fetch first, agent-browser when that comes back empty or walled |
+| `pasture mr stack <search>` | read | open GitLab MRs as a stack: which branch sits on which, each MR's own vs visible diff, CI |
+| `pasture agent ask <name> "<prompt>"` | write | prompt another agent, wait, print its answer; refuses when it is blocked on the user |
+| `pasture mr fanout <branch>…` | external | move stacked branches onto the default branch (trunk-based), in a temporary worktree, force-push with lease |
+| `pasture stack push <prefix> [--mr]` | external | push each commit of a Sapling stack to its own branch, optionally as a chain of MRs |
+
+**Safety levels.** `read` only reads. `write` changes local state and has
+`--dry-run`. `external` touches other systems: it prints its plan and exits 3
+unless given `--yes`, so an agent shows the plan and asks you first. Exit codes
+are shared: 0 ok, 1 failed, 2 usage, 3 needs you, 4 timed out, 5 missing tool.
+
+**Adding one.** A command is an executable file `cmds/<group>/<command>` whose
+first lines declare `# summary:`, `# usage:` and `# safety:`; `cmds/lib.sh` has
+the shared helpers. Commands of your own go in
+`~/.config/pasture/cmds.local/<group>/<command>`, which is never committed and
+wins over a built-in of the same name. Only these two places are read: a
+repository you open cannot add commands.
 
 ## 🌱 One task, one worktree
 
@@ -292,12 +331,46 @@ Agents learn the full tool with `agent-browser skills get core`. Pointed at a
 logged-in browser profile, an agent can do anything you can on those sites;
 use a separate profile for anything sensitive.
 
-## 📦 pnpm, bun and uv
+## ☕ Java and 🦀 Rust
 
-All three come from Homebrew and update with `pasture-update --all`.
+- **Java:** Homebrew installs Eclipse Temurin 21 and Maven. `pasture.zsh` sets
+  `JAVA_HOME` to JDK 21 unless you set it yourself, and `jdk <version>` switches
+  the current shell (`jdk` alone lists installed JDKs). For another version,
+  add a cask such as `temurin@17`. Temurin is free to use at work; older Oracle
+  JDK builds need a license there.
+- **Rust:** install [rustup](https://rustup.rs) once; it is not in the
+  Brewfile because it updates itself. `pasture-update` runs `rustup update`
+  (it is listed in `agents.conf`), `setup.sh` adds the `rust-analyzer`
+  component for Helix, and `pasture.zsh` puts `~/.cargo/bin` on PATH.
+  Cargo manages dependencies (`cargo add`, `cargo update`, `cargo tree`);
+  Homebrew adds the tools around it:
+
+  | Tool | Use |
+  | ---- | --- |
+  | `sccache` | compile cache shared by every worktree and repo (`RUSTC_WRAPPER`, set in `pasture.zsh`) |
+  | `cargo nextest run` | faster tests, compact output |
+  | `cargo deny check` | RustSec advisories, licenses, sources and duplicate versions (configure with `deny.toml`) |
+  | `cargo upgrade` | raise versions in `Cargo.toml`, majors included (`cargo update` only moves `Cargo.lock`) |
+  | `cargo binstall <tool>` | install other cargo tools as prebuilt binaries |
+
+  Commit `Cargo.lock` for applications. In a Bazel repo, Rust dependencies go
+  through `rules_rust` and `crate_universe`, and Bazel does the caching.
+
+## 📦 Node, pnpm, bun and uv
+
+**Node** comes through [fnm](https://github.com/Schniz/fnm). `setup.sh` installs
+the newest LTS as the default and `pasture-update` keeps it current. In a
+project with `.nvmrc` or `.node-version` (looked up from the current directory
+upwards, or `engines.node` in `package.json`), fnm switches to that version on
+`cd` and offers to install it if missing. fnm is loaded after `~/.zshrc`, so it
+wins over an nvm loaded there; `setup.sh` reminds you to remove nvm's lines,
+which slow every new shell. Pin Node per project with a `.nvmrc` rather than
+relying on the default.
+
+pnpm, bun and uv come from Homebrew and update with `pasture-update --all`.
 `pasture.zsh` puts their global bin dirs on PATH (`~/Library/pnpm` for
 `pnpm add -g`, `~/.bun/bin`; uv tools land in `~/.local/bin`) and loads
-completions for pnpm and uv. Their stores and caches are shared by default, so
+completions for pnpm, uv and fnm. Their stores and caches are shared by default, so
 the worktrees of one repo reuse downloads.
 
 - **One copy of each.** A second install, such as uv's standalone installer in
@@ -368,8 +441,8 @@ to skip loading a theme nobody sees.
 Each folder under `home/` is a [GNU Stow](https://www.gnu.org/software/stow/)
 package that mirrors `$HOME`. `setup.sh` stows every one it finds, so adding a
 package is adding a folder. `plugins/` holds herdr plugins, linked in place so
-they run from this clone. The root holds `setup.sh`, `Brewfile`,
-`agents.conf` and `skills.conf`.
+they run from this clone, and `cmds/` holds the `pasture` command library. The
+root holds `setup.sh`, `Brewfile`, `agents.conf` and `skills.conf`.
 
 | Package | Links to |
 | ------- | -------- |
@@ -381,7 +454,7 @@ they run from this clone. The root holds `setup.sh`, `Brewfile`,
 | `worktrunk` | `~/.config/worktrunk/config.toml` |
 | `sapling` | `~/Library/Preferences/sapling/sapling.conf` |
 | `zsh` | `~/.config/pasture/pasture.zsh` |
-| `bin` | `~/.local/bin/pasture-{layout,task,duo,collie,stack,skills,icons,update}` |
+| `bin` | `~/.local/bin/pasture` and `pasture-{layout,task,duo,collie,stack,skills,icons,update}` |
 
 | Plugin | Runs on | Does |
 | ------ | ------- | ---- |
@@ -424,8 +497,8 @@ Issues and pull requests are welcome. Scripts must parse with macOS's own
 `/bin/bash` 3.2 and pass `shellcheck`:
 
 ```bash
-for f in setup.sh home/bin/.local/bin/* plugins/*/*.sh; do /bin/bash -n "$f"; done
-shellcheck setup.sh home/bin/.local/bin/* plugins/*/*.sh
+for f in setup.sh home/bin/.local/bin/* plugins/*/*.sh cmds/lib.sh cmds/*/*; do /bin/bash -n "$f"; done
+shellcheck -x setup.sh home/bin/.local/bin/* plugins/*/*.sh cmds/lib.sh cmds/*/*
 zsh -n home/zsh/.config/pasture/pasture.zsh
 herdr config check
 ```

@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# summary: Read a web page as text: plain fetch first, a real browser when that fails
+# usage:   pasture web read <url> [--browser] [--max-chars N]
+# safety:  read
+#
+# The fetch (curl + macOS textutil) is fast and cheap. It falls back to
+# agent-browser, which runs JavaScript, when the fetch errors or returns a page
+# that is nearly empty or a JS/bot wall. --browser skips the fetch. Output is
+# cut at --max-chars (default 20000). The first line says which way was used.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need curl
+
+url="${1:-}"; [[ -n "$url" && "$url" != -* ]] || usage "pasture web read <url> [--browser] [--max-chars N]"
+shift
+browser=false max=20000
+while (( $# )); do
+  case "$1" in
+    --browser)   browser=true; shift ;;
+    --max-chars) max="${2:?}"; shift 2 ;;
+    *) usage "pasture web read <url> [--browser] [--max-chars N]" ;;
+  esac
+done
+
+emit() { printf '[%s] %s\n' "$1" "$url"; printf '%s' "$2" | head -c "$max"; echo; }
+
+if ! $browser; then
+  if html=$(curl -fsSL --max-time 20 -A "Mozilla/5.0 (Macintosh) pasture" "$url" 2>/dev/null); then
+    text=$(printf '%s' "$html" | textutil -convert txt -stdin -stdout -format html 2>/dev/null \
+           | sed 's/[[:space:]]*$//' | cat -s)
+    # A shell that only renders with JavaScript, or a bot wall, reads as
+    # almost nothing or as a stock message.
+    if (( ${#text} >= 150 )) && ! grep -qiE 'enable javascript|javascript is (required|disabled)|just a moment|checking your browser|captcha' <<<"$text"; then
+      emit fetch "$text"; exit 0
+    fi
+  fi
+fi
+
+need agent-browser
+text=$(agent-browser read "$url" 2>/dev/null) || { echo "pasture: neither fetch nor agent-browser could read $url" >&2; exit 1; }
+emit browser "$text"

@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# summary: Send one prompt to another agent, wait for it to settle, print its answer
+# usage:   pasture agent ask <name|pane> "<prompt>" [--timeout SECONDS] [--lines N] [--json] [--dry-run]
+# safety:  write
+#
+# Checks the agent first and never talks over it:
+#   blocked  → exit 3: it waits for the user; report it, never answer it
+#   working  → waits for it to finish first (same timeout)
+# Then submits the prompt, waits for idle/done/blocked and prints the last
+# --lines (default 200) of its output. Exit 3 if it ends blocked, 4 on timeout.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need herdr jq
+
+target="${1:-}" prompt="${2:-}"
+[[ -n "$target" && -n "$prompt" ]] || usage 'pasture agent ask <name|pane> "<prompt>" [--timeout SECONDS] [--lines N] [--json] [--dry-run]'
+shift 2
+timeout=600 lines=200 json=false dry=false
+while (( $# )); do
+  case "$1" in
+    --timeout) timeout="${2:?}"; shift 2 ;;
+    --lines)   lines="${2:?}"; shift 2 ;;
+    --json)    json=true; shift ;;
+    --dry-run) dry=true; shift ;;
+    *) usage 'pasture agent ask <name|pane> "<prompt>" [--timeout SECONDS] [--lines N] [--json] [--dry-run]' ;;
+  esac
+done
+
+status_of() { herdr agent get "$1" 2>/dev/null | jq -r '.result.agent.agent_status // empty' 2>/dev/null || true; }
+
+status=$(status_of "$target")
+[[ -n "$status" ]] || { echo "pasture: no agent '$target' (herdr agent list)" >&2; exit 5; }
+if [[ "$status" == blocked ]]; then
+  echo "pasture: $target is blocked on a dialog that is the user's to answer; not sending" >&2
+  exit 3
+fi
+if $dry; then
+  echo "would ask $target ($status): $prompt"
+  exit 0
+fi
+if [[ "$status" == working ]]; then
+  herdr agent wait "$target" --until idle --until "done" --until blocked --timeout $(( timeout * 1000 )) >/dev/null 2>&1 \
+    || { echo "pasture: $target still working after ${timeout}s" >&2; exit 4; }
+  [[ "$(status_of "$target")" == blocked ]] && { echo "pasture: $target is now blocked; not sending" >&2; exit 3; }
+fi
+
+if ! herdr agent prompt "$target" "$prompt" --wait --timeout $(( timeout * 1000 )) >/dev/null 2>&1; then
+  status=$(status_of "$target")
+  [[ "$status" == blocked ]] && { echo "pasture: $target blocked while answering; the user decides" >&2; exit 3; }
+  echo "pasture: no settled answer from $target within ${timeout}s (status: ${status:-gone})" >&2
+  exit 4
+fi
+status=$(status_of "$target")
+answer=$(herdr agent read "$target" --source recent-unwrapped --lines "$lines" 2>/dev/null || true)
+
+if $json; then
+  jq -n --arg a "$target" --arg s "$status" --arg t "$answer" '{agent:$a, status:$s, answer:$t}'
+else
+  printf '%s\n' "$answer"
+fi
+[[ "$status" == blocked ]] && exit 3
+exit 0
