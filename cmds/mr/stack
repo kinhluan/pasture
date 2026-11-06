@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# summary: Show open merge requests as a stack: what sits on what, own vs cumulative diff, CI
+# usage:   pasture mr stack <search> [--label LABEL] [--json]
+# safety:  read
+#
+# GitLab, through glab, in the current repo. Finds open MRs whose title or
+# description matches <search> (a ticket id works), or carrying --label, then
+# for each source branch works out which other branch it is stacked on.
+# Flags MRs that sit on another branch yet target the default branch: their
+# diff includes everything below them (review it once, merge it in order, or
+# retarget / `pasture mr fanout` the independent ones).
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need glab jq git
+in_git
+
+search="" label="" json=false
+while (( $# )); do
+  case "$1" in
+    --label) label="${2:?}"; shift 2 ;;
+    --json)  json=true; shift ;;
+    -*) usage "pasture mr stack <search> [--label LABEL] [--json]" ;;
+    *)  search="$1"; shift ;;
+  esac
+done
+[[ -n "$search" || -n "$label" ]] || usage "pasture mr stack <search> [--label LABEL] [--json]"
+
+args=(--per-page 100 -F json)
+[[ -n "$search" ]] && args+=(--search "$search")
+[[ -n "$label" ]] && args+=(--label "$label")
+mrs=$(glab mr list "${args[@]}")
+n=$(jq length <<<"$mrs")
+(( n > 0 )) || { $json && echo '[]' || echo "no open merge requests match"; exit 0; }
+
+base=$(default_branch)
+branches=$(jq -r '.[].source_branch' <<<"$mrs")
+# Fetch just these branches and the base; quiet, and fine to repeat.
+refspecs=("+refs/heads/$base:refs/remotes/origin/$base")
+while read -r b; do refspecs+=("+refs/heads/$b:refs/remotes/origin/$b"); done <<<"$branches"
+git fetch -q origin "${refspecs[@]}" 2>/dev/null || die "git fetch failed"
+
+rows=()
+while IFS=$'\t' read -r iid src tgt title ci conflicts; do
+  ref="origin/$src"
+  # The list API leaves the pipeline out; one call per MR fills it in.
+  [[ "$ci" == - ]] && ci=$(glab api "projects/:fullpath/merge_requests/$iid" 2>/dev/null \
+    | jq -r '.head_pipeline.status // "-"') || true
+  parent=$(stack_parent "$ref" "origin/$base")
+  own_c=$(git rev-list --count "$parent..$ref")
+  own_f=$(git diff --name-only "$parent" "$ref" | wc -l | tr -d ' ')
+  cum_f=$(git diff --name-only "origin/$tgt...$ref" | wc -l | tr -d ' ')
+  depth=$(git rev-list --count "origin/$base..$ref")
+  note=""
+  if [[ "$parent" != "origin/$base" && "$tgt" == "$base" ]]; then
+    note="stacked on ${parent#origin/} but targets $base: diff includes it"
+  elif [[ "$parent" != "origin/$base" && "origin/$tgt" != "$parent" ]]; then
+    note="stacked on ${parent#origin/} but targets $tgt"
+  fi
+  rows+=("$(jq -n --argjson iid "$iid" --arg src "$src" --arg tgt "$tgt" --arg title "$title" \
+    --arg ci "$ci" --argjson conflicts "$conflicts" --arg parent "${parent#origin/}" \
+    --argjson own_commits "$own_c" --argjson own_files "$own_f" --argjson diff_files "$cum_f" \
+    --argjson depth "$depth" --arg note "$note" \
+    '{iid:$iid, source:$src, target:$tgt, on:$parent, title:$title, ci:$ci, conflicts:$conflicts,
+      own_commits:$own_commits, own_files:$own_files, diff_files:$diff_files, depth:$depth, note:$note}')")
+done < <(jq -r '.[] | [.iid, .source_branch, .target_branch, (.title|gsub("\t";" ")),
+                      (.head_pipeline.status // .pipeline.status // "-"), (.has_conflicts // false)] | @tsv' <<<"$mrs")
+
+out=$(printf '%s\n' "${rows[@]}" | jq -s 'sort_by(.depth, .iid)')
+if $json; then echo "$out"; exit 0; fi
+
+echo "base: $base   (own = files this MR adds over the branch below; diff = what reviewers see)"
+jq -r '.[] | [.iid, .on, .source, .own_files, .diff_files, .ci, (if .conflicts then "CONFLICTS" else "." end), (if .note == "" then "." else .note end)] | @tsv' <<<"$out" |
+# "." stands in for empty fields: read collapses consecutive tabs.
+while IFS=$'\t' read -r iid on src own diff ci conf note; do
+  [[ "$conf" == . ]] && conf=""
+  printf '!%-6s %s\n        on %s · own %s files · diff %s files · ci %s %s\n' "$iid" "$src" "$on" "$own" "$diff" "$ci" "$conf"
+  [[ "$note" != . ]] && printf '        ⚠ %s\n' "$note"
+done

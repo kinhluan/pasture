@@ -159,7 +159,8 @@ link_plugins() {
 verify() {
   say "verifying"
   herdr config check || warn "herdr config check failed"
-  hx --health java starlark python markdown toml yaml | grep -E '^(Language|java|starlark|python|markdown|toml|yaml|✘|  )' || true
+  hx --health java rust starlark python markdown toml yaml | grep -E '^(Language|java|rust|starlark|python|markdown|toml|yaml|✘|  )' || true
+  command -v rustup >/dev/null || warn "Rust: install rustup from https://rustup.rs (it updates itself; pasture-update runs it)"
   # Forge CLIs: report auth, never log in for the user.
   gh auth status >/dev/null 2>&1 || warn "gh not logged in: gh auth login"
   glab auth status >/dev/null 2>&1 || warn "glab not logged in: glab auth login --hostname <gitlab host>"
@@ -194,6 +195,9 @@ command -v brew >/dev/null || { warn "Homebrew is required: https://brew.sh"; ex
 say "brew bundle"
 brew bundle --file="$PASTURE_DIR/Brewfile"
 install_starpls
+# Helix's Rust language server, when Rust is installed (rustup is not in the
+# Brewfile, see there). Idempotent.
+command -v rustup >/dev/null && { rustup component add rust-analyzer >/dev/null 2>&1 || warn "rustup: could not add rust-analyzer"; }
 
 say "linking configs"
 backup_conflicts

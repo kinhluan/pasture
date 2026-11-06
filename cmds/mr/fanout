@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# summary: Move stacked branches off the branch below them and onto the default branch (trunk-based)
+# usage:   pasture mr fanout <branch>... [--onto BRANCH] [--yes]
+# safety:  external
+#
+# For each <branch> (a remote branch, e.g. one MR of a stack), finds the branch
+# it is stacked on and replays only its own commits onto --onto (default: the
+# default branch), then force-pushes it with a lease. Use it for independent
+# parts once what they really need (a shared library, say) has merged: each MR
+# then shows only its own diff and can merge on its own.
+#
+# Without --yes it prints the plan and changes nothing. Rebases run in a
+# temporary worktree, so your checkout is untouched. A conflict aborts that
+# branch and leaves it as it was. You still own building and testing the
+# result: moving a branch off a dependency it really needs breaks it.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need git
+in_git
+
+onto="" yes=false branches=()
+while (( $# )); do
+  case "$1" in
+    --onto) onto="${2:?}"; shift 2 ;;
+    --yes)  yes=true; shift ;;
+    -*) usage "pasture mr fanout <branch>... [--onto BRANCH] [--yes]" ;;
+    *)  branches+=("$1"); shift ;;
+  esac
+done
+(( ${#branches[@]} > 0 )) || usage "pasture mr fanout <branch>... [--onto BRANCH] [--yes]"
+onto="${onto:-$(default_branch)}"
+
+refspecs=("+refs/heads/$onto:refs/remotes/origin/$onto")
+for b in "${branches[@]}"; do refspecs+=("+refs/heads/$b:refs/remotes/origin/$b"); done
+git fetch -q origin "${refspecs[@]}" || die "git fetch failed"
+
+plan=()
+for b in "${branches[@]}"; do
+  parent=$(stack_parent "origin/$b" "origin/$onto")
+  if [[ "$parent" == "origin/$onto" ]]; then
+    echo "  = $b already sits on $onto"
+    continue
+  fi
+  own=$(git rev-list --count "$parent..origin/$b")
+  drop=$(git rev-list --count "origin/$onto..$parent")
+  echo "  → $b: keep its $own commit(s), leave ${parent#origin/} ($drop commit(s) below it), replay onto $onto"
+  plan+=("$b|$parent")
+done
+(( ${#plan[@]} > 0 )) || exit 0
+if ! $yes; then
+  echo "plan only; rerun with --yes to rebase and force-push (ask the user first)"
+  exit 3
+fi
+
+tmp=$(mktemp -d)
+trap 'git worktree remove --force "$tmp/wt" >/dev/null 2>&1 || true; rm -rf "$tmp"' EXIT
+failed=0
+for item in "${plan[@]}"; do
+  b="${item%%|*}" parent="${item#*|}"
+  old=$(git rev-parse "origin/$b")
+  git worktree remove --force "$tmp/wt" >/dev/null 2>&1 || true
+  git worktree add -q --detach "$tmp/wt" "origin/$b"
+  if ! git -C "$tmp/wt" rebase -q --onto "origin/$onto" "$parent" >/dev/null 2>&1; then
+    git -C "$tmp/wt" rebase --abort >/dev/null 2>&1 || true
+    echo "  ✗ $b: conflicts replaying onto $onto; left unchanged" >&2
+    failed=1; continue
+  fi
+  if git -C "$tmp/wt" push -q --force-with-lease="refs/heads/$b:$old" origin "HEAD:refs/heads/$b"; then
+    echo "  ✓ $b now sits on $onto ($(git -C "$tmp/wt" rev-parse --short HEAD))"
+  else
+    echo "  ✗ $b: push refused (someone pushed since?); left unchanged" >&2
+    failed=1
+  fi
+done
+exit "$failed"

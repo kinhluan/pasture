@@ -1,5 +1,6 @@
 # Language servers for the stack we actually work in.
-# Check everything with: hx --health java starlark python markdown toml yaml
+# Check everything with: hx --health java rust starlark python markdown toml yaml
+# Rust needs nothing here: Helix uses rust-analyzer (rustup component) by default.
 
 [language-server.starpls]
 command = "starpls"

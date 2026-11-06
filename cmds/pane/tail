@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# summary: Read another pane's recent output, or wait until a pattern shows up
+# usage:   pasture pane tail <pane> [--lines N] [--wait REGEX] [--timeout SECONDS]
+# safety:  read
+#
+# <pane> is a herdr pane id (herdr pane list). --wait blocks until REGEX
+# appears in the pane (a dev server's "ready", a test's "FAIL"), then prints
+# the last --lines lines (default 80). Exit 4 if the wait times out.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need herdr
+
+pane="${1:-}"; [[ -n "$pane" && "$pane" != -* ]] || usage "pasture pane tail <pane> [--lines N] [--wait REGEX] [--timeout SECONDS]"
+shift
+lines=80 wait="" timeout=120
+while (( $# )); do
+  case "$1" in
+    --lines)   lines="${2:?}"; shift 2 ;;
+    --wait)    wait="${2:?}"; shift 2 ;;
+    --timeout) timeout="${2:?}"; shift 2 ;;
+    *) usage "pasture pane tail <pane> [--lines N] [--wait REGEX] [--timeout SECONDS]" ;;
+  esac
+done
+
+if [[ -n "$wait" ]]; then
+  if ! herdr pane wait-output "$pane" --regex "$wait" --timeout $(( timeout * 1000 )) >/dev/null 2>&1; then
+    echo "pasture: '$wait' did not appear in $pane within ${timeout}s" >&2
+    herdr pane read "$pane" --lines "$lines" 2>/dev/null || true
+    exit 4
+  fi
+fi
+herdr pane read "$pane" --lines "$lines"

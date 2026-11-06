@@ -18,6 +18,14 @@ brew "pnpm"
 brew "uv"
 brew "bun"
 
+# Java: Eclipse Temurin 21 (LTS, free to use at work, unlike older Oracle JDK
+# builds) and Maven. pasture.zsh points JAVA_HOME at 21 unless you set it, and
+# `jdk 17` switches the current shell. Other versions: cask "temurin@17" etc.
+# Rust is not here: rustup (https://rustup.rs) installs and updates itself;
+# pasture-update runs `rustup update`, setup.sh adds rust-analyzer.
+cask "temurin@21"
+brew "maven"
+
 # Worktrunk (`wt`): one git worktree per task, so parallel agents never share
 # a working copy; config in home/worktrunk, wrapped by pasture-task.
 brew "worktrunk"

@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# summary: Push each commit of the current Sapling stack to its own branch, optionally as a chain of MRs
+# usage:   pasture stack push <branch-prefix> [--mr] [--base BRANCH] [--yes]
+# safety:  external
+#
+# Run in a repo where the stack was built with `sl` (see `sl stack`). Commit n
+# of the stack, bottom first, goes to branch <prefix>-<n>-<slug of its title>.
+# Rerun after `sl amend` / `sl absorb`: branches that changed are force-pushed.
+# --mr also opens a GitLab merge request per branch with glab, each targeting
+# the branch below it (the first targets --base, default the default branch),
+# or fixes the target of an existing one.
+#
+# Without --yes it prints the plan and changes nothing.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need sl git
+in_git
+
+prefix="" mr=false base="" yes=false
+while (( $# )); do
+  case "$1" in
+    --mr)   mr=true; shift ;;
+    --base) base="${2:?}"; shift 2 ;;
+    --yes)  yes=true; shift ;;
+    -*) usage "pasture stack push <branch-prefix> [--mr] [--base BRANCH] [--yes]" ;;
+    *)  prefix="$1"; shift ;;
+  esac
+done
+[[ -n "$prefix" ]] || usage "pasture stack push <branch-prefix> [--mr] [--base BRANCH] [--yes]"
+base="${base:-$(default_branch)}"
+$mr && need glab jq
+
+# Draft commits from the bottom of the stack up to the current one.
+stack=$(sl log -r 'sort(draft() & ::., rev)' -T '{node}\t{desc|firstline}\n')
+[[ -n "$stack" ]] || { echo "no draft commits below the current one (sl stack)"; exit 0; }
+total=$(grep -c . <<<"$stack")
+
+names=() nodes=() titles=()
+i=0
+while IFS=$'\t' read -r node title; do
+  i=$((i + 1))
+  names+=("$prefix-$i-$(printf '%s' "$title" | slug)")
+  nodes+=("$node"); titles+=("$title")
+done <<<"$stack"
+
+echo "stack of $total on $base:"
+for (( k = 0; k < total; k++ )); do
+  tgt="$base"; (( k > 0 )) && tgt="${names[$((k - 1))]}"
+  echo "  $((k + 1))/$total ${nodes[$k]:0:10} → ${names[$k]}$($mr && echo "   MR into $tgt")"
+done
+if ! $yes; then
+  echo "plan only; rerun with --yes to push$($mr && echo " and open the merge requests") (ask the user first)"
+  exit 3
+fi
+
+for (( k = 0; k < total; k++ )); do
+  b="${names[$k]}"
+  remote=$(git ls-remote --heads origin "refs/heads/$b" | cut -f1)
+  if [[ -z "$remote" ]]; then
+    sl push -q -r "${nodes[$k]}" --to "$b" --create
+  elif [[ "$remote" != "${nodes[$k]}" ]]; then
+    sl push -q -r "${nodes[$k]}" --to "$b" --force
+  fi
+  echo "  ✓ $b"
+done
+
+$mr || exit 0
+for (( k = 0; k < total; k++ )); do
+  b="${names[$k]}"
+  tgt="$base"; (( k > 0 )) && tgt="${names[$((k - 1))]}"
+  existing=$(glab mr list --source-branch "$b" -F json | jq -r '.[0] | if . then "\(.iid)\t\(.target_branch)" else empty end')
+  if [[ -z "$existing" ]]; then
+    glab mr create --source-branch "$b" --target-branch "$tgt" \
+      --title "${titles[$k]} ($((k + 1))/$total)" \
+      --description "Part $((k + 1)) of $total of a stack; review after the one it targets." --yes >/dev/null
+    echo "  ✓ MR for $b → $tgt"
+  else
+    iid="${existing%%$'\t'*}" cur="${existing#*$'\t'}"
+    if [[ "$cur" != "$tgt" ]]; then
+      glab mr update "$iid" --target-branch "$tgt" >/dev/null
+      echo "  ✓ !$iid now targets $tgt"
+    else
+      echo "  = !$iid already targets $tgt"
+    fi
+  fi
+done
