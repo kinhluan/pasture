@@ -104,7 +104,8 @@ Once per machine:
 | Core | `stow`, `jq`, `helix`, `lazygit`, `starship` |
 | Version control | `worktrunk` (`wt`), `sapling` (`sl`), `gh`, `glab` |
 | JS and Python | `fnm` (Node), `pnpm`, `bun`, `uv` |
-| Java | Eclipse Temurin 21, `maven` (Rust comes from rustup, not Homebrew) |
+| Java | Eclipse Temurin 21, `maven` |
+| Rust tools | `sccache`, `cargo-nextest`, `cargo-deny`, `cargo-edit`, `cargo-binstall` (Rust itself comes from rustup) |
 | Agents' tools | `agent-browser`, `agent-desktop`, `sonarqube-cli` (`sonar`) |
 | Editors | Visual Studio Code, Antigravity IDE (an app you already installed by hand is adopted, not reinstalled) |
 | Bazel | `bazelisk` (as `bazel`; runs the version in each repo's `.bazelversion`), `buildifier` |
@@ -341,6 +342,19 @@ use a separate profile for anything sensitive.
   Brewfile because it updates itself. `pasture-update` runs `rustup update`
   (it is listed in `agents.conf`), `setup.sh` adds the `rust-analyzer`
   component for Helix, and `pasture.zsh` puts `~/.cargo/bin` on PATH.
+  Cargo manages dependencies (`cargo add`, `cargo update`, `cargo tree`);
+  Homebrew adds the tools around it:
+
+  | Tool | Use |
+  | ---- | --- |
+  | `sccache` | compile cache shared by every worktree and repo (`RUSTC_WRAPPER`, set in `pasture.zsh`) |
+  | `cargo nextest run` | faster tests, compact output |
+  | `cargo deny check` | RustSec advisories, licenses, sources and duplicate versions (configure with `deny.toml`) |
+  | `cargo upgrade` | raise versions in `Cargo.toml`, majors included (`cargo update` only moves `Cargo.lock`) |
+  | `cargo binstall <tool>` | install other cargo tools as prebuilt binaries |
+
+  Commit `Cargo.lock` for applications. In a Bazel repo, Rust dependencies go
+  through `rules_rust` and `crate_universe`, and Bazel does the caching.
 
 ## 📦 Node, pnpm, bun and uv
 

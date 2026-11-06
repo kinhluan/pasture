@@ -30,6 +30,14 @@ brew "bun"
 cask "temurin@21"
 brew "maven"
 
+# Rust tools around Cargo (Cargo itself comes with rustup). Prebuilt here, so
+# no compiling them; none pulls in Homebrew's own Rust.
+brew "sccache"          # shared compile cache: new worktrees reuse built crates
+brew "cargo-nextest"    # faster test runner, compact output
+brew "cargo-deny"       # advisories (RustSec), licenses, sources, duplicates
+brew "cargo-edit"       # cargo upgrade: bump versions in Cargo.toml, majors too
+brew "cargo-binstall"   # install other cargo tools as binaries, not from source
+
 # Worktrunk (`wt`): one git worktree per task, so parallel agents never share
 # a working copy; config in home/worktrunk, wrapped by pasture-task.
 brew "worktrunk"

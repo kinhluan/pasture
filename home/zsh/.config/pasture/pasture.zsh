@@ -21,6 +21,11 @@ if (( $+commands[fnm] )); then
   eval "$(fnm env --use-on-cd --version-file-strategy=recursive --resolve-engines --shell zsh)"
 fi
 
+# Rust: compile through sccache, so every worktree and repo shares one cache
+# of built crates (a fresh `pasture-task` worktree does not rebuild them all).
+# Not a shared CARGO_TARGET_DIR: worktrees would lock and overwrite each other.
+(( $+commands[sccache] )) && export RUSTC_WRAPPER=sccache
+
 # Java: JDK 21 unless JAVA_HOME is already set; `jdk <version>` switches this
 # shell (`jdk` alone lists what is installed).
 if [[ -z "${JAVA_HOME:-}" ]] && /usr/libexec/java_home -v 21 >/dev/null 2>&1; then
