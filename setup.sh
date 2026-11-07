@@ -156,6 +156,29 @@ link_plugins() {
   done
 }
 
+install_git_hooks() {
+  # gitleaks pre-commit guard for THIS repo only (pasture is public — a leaked
+  # secret is public forever). Scoped to .git/hooks here, never a global
+  # core.hooksPath, so other repos' own hooks (husky, lefthook…) are untouched.
+  command -v gitleaks >/dev/null || return 0
+  local hook="$PASTURE_DIR/.git/hooks/pre-commit"
+  [[ -d "$PASTURE_DIR/.git/hooks" ]] || return 0
+  if [[ -e "$hook" ]] && ! grep -q 'pasture:gitleaks' "$hook" 2>/dev/null; then
+    warn "a pre-commit hook already exists in this repo; leaving it. To scan with gitleaks, add: gitleaks git --staged --redact --no-banner"
+    return 0
+  fi
+  cat >"$hook" <<'HOOK'
+#!/bin/sh
+# pasture:gitleaks — block commits that add a secret. Managed by setup.sh.
+command -v gitleaks >/dev/null 2>&1 || exit 0
+gitleaks git --staged --redact --no-banner -l error || {
+  echo "gitleaks: a secret is staged — commit blocked. Fix it, or 'git commit --no-verify' to override." >&2
+  exit 1
+}
+HOOK
+  chmod +x "$hook"
+}
+
 verify() {
   say "verifying"
   herdr config check || warn "herdr config check failed"
@@ -213,6 +236,7 @@ command -v herdr >/dev/null && herdr server reload-config >/dev/null 2>&1 || tru
 say "herdr integrations"
 install_integrations
 link_plugins
+install_git_hooks
 
 say "skill packs (skills.conf)"
 "$PASTURE_DIR/home/bin/.local/bin/pasture-skills" \

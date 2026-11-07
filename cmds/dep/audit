@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# summary: Scan this repo offline for secrets, SAST issues, and vulnerable deps
+# usage:   pasture dep audit [--history] [--fail-on LEVEL] [--json]
+# safety:  read
+#
+# Runs the offline scanners the security-analysis / dependency-management skills
+# teach, over the current repo, and skips any tool that is not installed. No
+# code ever leaves the machine (grype needs one `grype db update` beforehand,
+# then runs offline; semgrep fetches its ruleset once, then caches it).
+#   gitleaks  secrets — working tree, or the full git history with --history
+#   semgrep   SAST (p/default); exit told apart from a ruleset-fetch failure
+#   grype     known-CVE dependencies, catalogued from lockfiles via syft
+# One line per tool, then a summary. Exit 1 if any tool reports a finding,
+# 5 if not one scanner is installed. --fail-on sets grype's severity gate
+# (default high): negligible|low|medium|high|critical.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need git
+in_git
+
+history=false fail_on=high json=false
+while (( $# )); do
+  case "$1" in
+    --history) history=true; shift ;;
+    --fail-on) fail_on="${2:?}"; shift 2 ;;
+    --json)    json=true; shift ;;
+    *) usage "pasture dep audit [--history] [--fail-on LEVEL] [--json]" ;;
+  esac
+done
+
+ran=0 issues=0
+names=() states=()
+record() { names+=("$1"); states+=("$2"); }
+
+# gitleaks: exit 0 clean, 1 leak found, >1 error.
+if command -v gitleaks >/dev/null; then
+  ran=$((ran+1)); rc=0
+  if $history; then
+    gitleaks git  --redact --no-banner -l error . >/dev/null 2>&1 || rc=$?
+  else
+    gitleaks dir  --redact --no-banner -l error . >/dev/null 2>&1 || rc=$?
+  fi
+  case "$rc" in
+    0) record gitleaks "clean" ;;
+    1) record gitleaks "SECRET FOUND — run: gitleaks ${history:+git}${history:+ }${history:+--redact .}"; issues=$((issues+1)) ;;
+    *) record gitleaks "error (rc $rc)" ;;
+  esac
+else
+  record gitleaks "skipped (brew install gitleaks)"
+fi
+
+# semgrep: exit 0 clean, 1 findings (with --error), 2 error, 7 fatal.
+if command -v semgrep >/dev/null; then
+  ran=$((ran+1)); rc=0
+  semgrep scan --config p/default --error --quiet --metrics off . >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) record semgrep "clean" ;;
+    1) record semgrep "findings — run: semgrep scan --config p/default ."; issues=$((issues+1)) ;;
+    *) record semgrep "skipped (needs ruleset; run once online, then cached)" ;;
+  esac
+else
+  record semgrep "skipped (brew install semgrep)"
+fi
+
+# grype: scans the dir (lockfiles via syft cataloguers). --fail-on → exit 1
+# when a finding at or above LEVEL exists; other non-zero is a real error.
+if command -v grype >/dev/null; then
+  ran=$((ran+1)); rc=0
+  GRYPE_DB_AUTO_UPDATE=${GRYPE_DB_AUTO_UPDATE:-false} \
+    grype "dir:$PWD" --fail-on "$fail_on" -q >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) record grype "clean (< $fail_on)" ;;
+    1) record grype "CVE >= $fail_on — run: grype dir:. --fail-on $fail_on"; issues=$((issues+1)) ;;
+    *) record grype "error (rc $rc; try: grype db update)" ;;
+  esac
+else
+  record grype "skipped (brew install grype)"
+fi
+
+if $json; then
+  out="{}"
+  i=0
+  while (( i < ${#names[@]} )); do
+    out=$(jq --arg k "${names[$i]}" --arg v "${states[$i]}" '. + {($k):$v}' <<<"$out")
+    i=$((i+1))
+  done
+  jq -n --argjson tools "$out" --argjson issues "$issues" --argjson ran "$ran" \
+    '{tools:$tools, issues:$issues, scanners_run:$ran}'
+else
+  i=0
+  while (( i < ${#names[@]} )); do
+    printf '  %-9s %s\n' "${names[$i]}" "${states[$i]}"
+    i=$((i+1))
+  done
+  echo
+  if (( ran == 0 )); then
+    echo "no scanner installed — brew bundle to get gitleaks, semgrep, grype"
+  elif (( issues > 0 )); then
+    echo "$issues scanner(s) found something — see the run: lines above"
+  else
+    echo "clean across $ran scanner(s)"
+  fi
+fi
+
+(( ran > 0 )) || exit 5
+(( issues == 0 )) || exit 1
+exit 0

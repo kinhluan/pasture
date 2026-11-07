@@ -86,3 +86,20 @@ brew "yaml-language-server"
 
 # Lint our own scripts
 brew "shellcheck"
+
+# Secret & vulnerability scanning — all four run fully offline and never upload
+# the codebase (pasture is a public repo; a leaked secret is public forever).
+# cargo-deny above covers Rust advisories; these cover the rest.
+#   gitleaks   — secret scanning of a tree or full git history; pre-commit hook
+#                wired in setup.sh so secrets are caught before they are committed
+#   trufflehog — second-pass secret scan; stays offline unless --only-verified
+#   semgrep    — SAST for JS/TS/Java/Python; runs the local ruleset, no cloud
+#   syft       — generate a CycloneDX/SPDX SBOM from a repo or image (no network)
+#   grype      — scan that SBOM (or an image) for known CVEs; pairs with syft.
+#                Offline after one DB pull: `grype db update` once, then run with
+#                GRYPE_DB_AUTO_UPDATE=false — no code leaves the machine either way
+brew "gitleaks"
+brew "trufflehog"
+brew "semgrep"
+brew "syft"
+brew "grype"
