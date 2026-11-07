@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# summary: Look up one dependency or CVE: is this lib vulnerable, how risky is this CVE
+# usage:   pasture dep cve <purl|CVE-ID> [--json]
+# safety:  read
+#
+# Two modes, both read-only HTTP to public advisory APIs. Only the purl or the
+# CVE id leaves the machine — never your code.
+#   pkg:...    query OSV.dev for vulns affecting that exact package version
+#   CVE-xxxx   EPSS exploit-probability (FIRST) + CISA KEV known-exploited check
+# purl form: pkg:<type>/<namespace>/<name>@<version>, e.g.
+#   pkg:maven/io.vertx/vertx-core@4.4.0    pkg:npm/lodash@4.17.20
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need curl jq
+
+arg="${1:-}"; [[ -n "$arg" && "$arg" != -* ]] || usage "pasture dep cve <purl|CVE-ID> [--json]"
+shift
+json=false
+while (( $# )); do
+  case "$1" in
+    --json) json=true; shift ;;
+    *) usage "pasture dep cve <purl|CVE-ID> [--json]" ;;
+  esac
+done
+
+# ---- CVE mode: how dangerous is this specific CVE ----
+if [[ "$arg" == CVE-* || "$arg" == cve-* ]]; then
+  cve=$(tr '[:lower:]' '[:upper:]' <<<"$arg")
+  epss=$(curl -fsS --max-time 20 "https://api.first.org/data/v1/epss?cve=$cve" 2>/dev/null \
+         | jq -c '.data[0] // {}' 2>/dev/null) || die "EPSS lookup failed (network?)"
+  kev=$(curl -fsS --max-time 30 \
+          "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json" 2>/dev/null \
+        | jq -c --arg c "$cve" '[.vulnerabilities[] | select(.cveID==$c)] | .[0] // null' 2>/dev/null) \
+        || kev=null
+  if $json; then
+    jq -n --arg cve "$cve" --argjson epss "${epss:-{\}}" --argjson kev "${kev:-null}" \
+      '{cve:$cve, epss:($epss.epss // null), percentile:($epss.percentile // null),
+        known_exploited:($kev != null), kev:$kev}'
+    exit 0
+  fi
+  score=$(jq -r '.epss // "n/a"' <<<"$epss")
+  pct=$(jq -r 'if .percentile then (.percentile|tonumber*100|floor|tostring)+"%" else "n/a" end' <<<"$epss")
+  echo "$cve"
+  echo "  EPSS (exploit probability, 30d): $score   percentile: $pct"
+  if [[ "$kev" == null || -z "$kev" ]]; then
+    echo "  CISA KEV: not listed"
+  else
+    echo "  CISA KEV: LISTED — known exploited in the wild"
+    jq -r '"    due " + (.dueDate // "?") + " · " + (.shortDescription // "" | .[0:100])' <<<"$kev"
+  fi
+  exit 0
+fi
+
+# ---- purl mode: is this library version vulnerable ----
+[[ "$arg" == pkg:* ]] || die "give a purl (pkg:type/name@version) or a CVE id; got: $arg"
+resp=$(curl -fsS --max-time 20 -X POST "https://api.osv.dev/v1/query" \
+        -d "$(jq -n --arg p "$arg" '{package:{purl:$p}}')" 2>/dev/null) \
+        || die "OSV query failed (network?)"
+n=$(jq '(.vulns // []) | length' <<<"$resp")
+
+if $json; then
+  jq '{purl:"'"$arg"'", count:((.vulns//[])|length),
+       vulns:[(.vulns//[])[] | {id, aliases, summary,
+         fixed:[.affected[]?.ranges[]?.events[]?.fixed // empty] | unique}]}' <<<"$resp"
+  exit 0
+fi
+
+if (( n == 0 )); then
+  echo "$arg"
+  echo "  OSV: no known vulnerabilities"
+  exit 0
+fi
+echo "$arg"
+echo "  OSV: $n known vulnerabilit$([[ $n == 1 ]] && echo y || echo ies)"
+jq -r '(.vulns//[])[] |
+  "  • " + .id
+  + (if (.aliases // []) | length > 0 then " (" + ((.aliases|join(", "))) + ")" else "" end)
+  + (if .summary then "\n      " + (.summary|.[0:100]) else "" end)
+  + (([.affected[]?.ranges[]?.events[]?.fixed // empty] | unique) as $f
+     | if ($f|length) > 0 then "\n      fixed in: " + ($f|join(", ")) else "" end)' <<<"$resp"
+exit 1
