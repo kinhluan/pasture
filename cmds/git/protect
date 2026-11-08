@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# summary: Install the pre-push secret guard into this repo (keeps any existing hook)
+# usage:   pasture git protect [--remove]
+# safety:  write
+#
+# Writes a pre-push hook into THIS repo's hooks dir that runs `pasture git
+# guard` (block a secret pushed to a public remote). An existing pre-push hook
+# is preserved as pre-push.local and chained, so husky/lefthook still run.
+# Scoped to one repo: no global core.hooksPath, so other repos are untouched.
+# --remove restores the previous hook (or deletes ours).
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need git
+in_git
+
+hook=$(git rev-parse --git-path hooks/pre-push)
+prev="$(dirname "$hook")/pre-push.local"
+marker='pasture:git-guard'
+
+if [[ "${1:-}" == "--remove" ]]; then
+  if [[ -e "$hook" ]] && grep -q "$marker" "$hook" 2>/dev/null; then
+    if [[ -e "$prev" ]]; then mv "$prev" "$hook"; echo "restored the previous pre-push hook"; else rm "$hook"; echo "removed the pasture pre-push guard"; fi
+  else
+    echo "no pasture guard installed here"
+  fi
+  exit 0
+elif [[ -n "${1:-}" ]]; then
+  usage "pasture git protect [--remove]"
+fi
+
+mkdir -p "$(dirname "$hook")"
+# Preserve a pre-existing, non-pasture hook so we can chain to it.
+if [[ -e "$hook" ]] && ! grep -q "$marker" "$hook" 2>/dev/null; then
+  [[ -e "$prev" ]] && die "both $hook and $prev exist; move one aside first"
+  mv "$hook" "$prev"
+  echo "kept your existing pre-push hook as $(basename "$prev") (it will still run)"
+fi
+
+cat >"$hook" <<'HOOK'
+#!/bin/sh
+# pasture:git-guard — block a secret pushed to a PUBLIC remote. Managed by
+# `pasture git protect`. Remote name is $1, URL is $2; ref lines arrive on stdin.
+input=$(cat)
+st=0
+if command -v pasture >/dev/null 2>&1; then
+  printf '%s' "$input" | pasture git guard "$1" "$2" || st=1
+fi
+prev="$(git rev-parse --git-path hooks/pre-push.local 2>/dev/null)"
+if [ "$st" -eq 0 ] && [ -x "$prev" ]; then
+  printf '%s' "$input" | "$prev" "$@" || st=1
+fi
+exit $st
+HOOK
+chmod +x "$hook"
+echo "pre-push guard installed in $hook"
+echo "  pushes to a public github.com/gitlab.com remote are now scanned for secrets"
