@@ -174,8 +174,11 @@ The agents are the sheep; the collie watches them so you don't have to.
   🏃 working, 💤 idle. Type a number to jump.
 - **Send home.** `⌃⌥X` quits every idle agent after one y/N, using each agent's
   own quit command so its session can be resumed. It skips agents with an unread
-  answer, the focused one and named ones (pasture-duo reviewers). Panes stay
-  open as shells. Answer `F` to also force-stop the ones that ignore their quit.
+  answer, the focused one and named ones (pasture-duo reviewers). Their tabs
+  close too, unless another pane there still runs something (hx, a dev server,
+  a build): those stay and are named. Answer `F` to also force-stop the ones
+  that ignore their quit; `pasture agent sweep --tidy` closes idle tabs left
+  from earlier.
   Idle agents hold memory — a few dozen push a 16GB Mac into swap — so this is
   the cheap fix; each one is written to a ledger, and
   `pasture agent sweep --recall` prints the `cd … && claude --continue` (or

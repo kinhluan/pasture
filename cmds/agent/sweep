@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # summary: Free memory — send idle agents home, keep a ledger to call them back
-# usage:   pasture agent sweep [--yes] [--force] [--include-named] [--timeout S] | --recall
+# usage:   pasture agent sweep [--yes] [--force] [--close] [--include-named] [--timeout S] | --tidy [--yes] | --recall
 # safety:  external
 #
 # Idle agents hold hundreds of MB each; a few dozen push a 16GB Mac into swap
@@ -17,13 +17,22 @@
 #
 #   1. writes each one to the ledger ~/.cache/pasture/swept.tsv
 #   2. sends every agent its own quit (/exit, /quit) at once, waits --timeout
-#      (default 8s). The pane stays as a shell, so layouts survive.
+#      (default 8s)
 #   3. survivors: listed — or, with --force, handed to `pasture agent stop
 #      --force` (pane close, then signals). Grok tends to ignore /quit.
+#   4. --close: closes the tabs those agents sat in — only a tab whose every
+#      pane is now a bare shell (or lazygit) with no background job. A tab
+#      that still runs hx, a dev server, a build or another agent is kept and
+#      named. A workspace left with nothing but closable tabs is closed whole.
+#      The ledger keeps each agent's directory, so --recall still works.
+#
+# --tidy closes every such idle tab without quitting any agent (for tabs a
+# sweep without --close left behind). Never the focused tab or this one.
 set -euo pipefail
 . "$PASTURE_DIR/cmds/lib.sh"
 
 ledger="${XDG_CACHE_HOME:-$HOME/.cache}/pasture/swept.tsv"
+USAGE="pasture agent sweep [--yes] [--force] [--close] [--include-named] [--timeout S] | --tidy [--yes] | --recall"
 
 # How to call one back: resume the newest session in its directory.
 resume_cmd() { # $1 = agent
@@ -46,36 +55,146 @@ if [[ "${1:-}" == "--recall" ]]; then
 fi
 
 need herdr jq
-yes=false force=false named=false timeout=8
+yes=false force=false named=false close=false tidy=false timeout=8
 while (( $# )); do
   case "$1" in
     --yes|-y)        yes=true; shift ;;
     --force)         force=true; shift ;;
+    --close)         close=true; shift ;;
+    --tidy)          tidy=true; shift ;;
     --include-named) named=true; shift ;;
     --timeout)       timeout="${2:?}"; shift 2 ;;
-    *) usage "pasture agent sweep [--yes] [--force] [--include-named] [--timeout S] | --recall" ;;
+    *) usage "$USAGE" ;;
   esac
 done
 
 swap_used() { sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used") {print $(i+2); exit}}'; }
 
-# pane · agent · cwd · title, with control chars stripped (titles are untrusted).
+# --- idle-tab detection ------------------------------------------------------
+# What keeps a pane busy: prints the process name, or nothing when the pane is
+# a bare shell (or lazygit, which holds no state) with no background job.
+# Uses $psnap, one `ps` snapshot: "pid ppid comm" lines.
+pane_busy() { # $1 = pane id
+  local info p comm root="" parent
+  info=$(herdr pane process-info --pane "$1" 2>/dev/null) || { echo "?"; return 0; }
+  while IFS=$'\t' read -r p comm; do
+    comm="${comm##*/}"; comm="${comm#-}"
+    case "$comm" in
+      zsh|bash|sh|fish) root="$p" ;;
+      lazygit)
+        # Check the shell that started it, so its background jobs count too;
+        # if lazygit was exec'd straight from herdr, check lazygit alone.
+        parent=$(awk -v p="$p" '$1==p{print $2; exit}' <<<"$psnap")
+        case "$(awk -v p="$parent" '$1==p{c=$3; sub(/.*\//,"",c); sub(/^-/,"",c); print c; exit}' <<<"$psnap")" in
+          zsh|bash|sh|fish) root="$parent" ;;
+          *)                root="$p" ;;
+        esac ;;
+      "") ;;
+      *) echo "$comm"; return 0 ;;
+    esac
+  done < <(jq -r '.result.process_info.foreground_processes[]? | [.pid, .argv0] | @tsv' <<<"$info")
+  [[ -n "$root" ]] || { echo "?"; return 0; }
+  # Any descendant of the shell other than lazygit and its git (git-*) calls is a
+  # background job (a dev server started with &, a build) — keep the tab.
+  awk -v root="$root" '
+    { pp[$1]=$2; c=$3; sub(/.*\//,"",c); nm[$1]=c }
+    END {
+      q[1]=root; n=1
+      for (i=1; i<=n; i++)
+        for (p in pp) if (pp[p]==q[i]) {
+          q[++n]=p
+          if (nm[p] != "lazygit" && nm[p] !~ /^git(-|$)/) { print nm[p]; exit }
+        }
+    }' <<<"$psnap"
+}
+
+# Plan, then (with --yes) close idle tabs. $1 = tab ids in scope, space
+# separated, or "all". Prints what it closes and what it keeps, and why.
+tidy_tabs() {
+  local scope="$1" do_it="$2" panes ws tab pane foc why line dir d
+  psnap=$(ps -axo pid=,ppid=,comm=)
+  panes=$(herdr pane list | jq -r '.result.panes[]
+    | [.workspace_id, .tab_id, .pane_id, (.focused|tostring),
+       (.cwd // "" | split("/") | last | gsub("[[:cntrl:]]"; " "))] | @tsv')
+  # Verdict per tab: "ws tab ok|keep reason dir"
+  local verdict=""
+  while IFS=$'\t' read -r ws tab; do
+    [[ "$scope" == all || " $scope " == *" $tab "* ]] || continue
+    why="" dir=""
+    while IFS=$'\t' read -r _ _ pane foc d; do
+      dir="$d"
+      if [[ "$foc" == true ]];                then why="focused"; break; fi
+      if [[ "$pane" == "${HERDR_PANE_ID:-}" ]]; then why="this pane"; break; fi
+      why=$(pane_busy "$pane"); [[ -n "$why" ]] && { why="$pane runs $why"; break; }
+    done < <(awk -F'\t' -v t="$tab" '$2==t' <<<"$panes")
+    if [[ -z "$why" ]]; then verdict+="$ws"$'\t'"$tab"$'\t'"ok"$'\t'"$dir"$'\n'
+    else                     verdict+="$ws"$'\t'"$tab"$'\t'"keep: $why"$'\t'"$dir"$'\n'; fi
+  done < <(cut -f1,2 <<<"$panes" | awk '!seen[$0]++')
+
+  [[ -n "$verdict" ]] || { echo "  no tabs in scope"; return 0; }
+  # A workspace whose every tab (in herdr, not only in scope) is ok closes whole.
+  local all_tabs whole
+  all_tabs=$(cut -f1,2 <<<"$panes" | awk '!seen[$0]++')
+  whole=$(awk -F'\t' 'NR==FNR { if (NF) tot[$1]++; next }
+                      $3=="ok" { ok[$1]++ }
+                      END { for (w in ok) if (ok[w]==tot[w]) print w }' \
+            <(printf '%s\n' "$all_tabs") <(printf '%s' "$verdict"))
+
+  local closed=0 kept=0
+  while IFS=$'\t' read -r ws tab line dir; do
+    [[ -n "$tab" ]] || continue
+    if [[ "$line" != ok ]]; then
+      printf '  keep   %-7s %-22s %s\n' "$tab" "$dir" "${line#keep: }"; kept=$((kept+1)); continue
+    fi
+    if grep -qx "$ws" <<<"$whole"; then
+      printf '  close  %-7s %-22s (workspace %s)\n' "$tab" "$dir" "$ws"
+    else
+      printf '  close  %-7s %-22s\n' "$tab" "$dir"
+    fi
+    closed=$((closed+1))
+  done <<<"$verdict"
+  echo "  → close $closed tab(s), keep $kept"
+  $do_it || return 0
+
+  # Whole workspaces first, then the remaining tabs one by one.
+  for ws in $whole; do herdr workspace close "$ws" >/dev/null 2>&1 || echo "  ❌ workspace $ws"; done
+  while IFS=$'\t' read -r ws tab line _; do
+    [[ "$line" == ok ]] || continue
+    grep -qx "$ws" <<<"$whole" && continue
+    herdr tab close "$tab" >/dev/null 2>&1 || echo "  ❌ tab $tab"
+  done <<<"$verdict"
+  echo "🧹 closed $closed tab(s)"
+}
+
+if $tidy; then
+  echo "pasture: close idle tabs (every pane a bare shell, nothing running)"
+  if ! $yes; then
+    tidy_tabs all false
+    echo "  (re-run with --yes to close them)" >&2; exit 3
+  fi
+  tidy_tabs all true
+  exit 0
+fi
+
+# --- sweep ---------------------------------------------------------------------
+# pane · agent · cwd · title · tab, with control chars stripped (untrusted).
 sleepers=$(herdr agent list | jq -r --arg me "${HERDR_PANE_ID:-}" --argjson named "$named" '
   .result.agents[]
   | select(.agent_status == "idle" and .focused != true and .pane_id != $me
            and ($named or ((.name // "") == "")))
-  | [.pane_id, .agent, (.cwd // ""), (.terminal_title_stripped // "")]
+  | [.pane_id, .agent, (.cwd // ""), (.terminal_title_stripped // ""), (.tab_id // "")]
   | map(gsub("[[:cntrl:]]"; " ")) | @tsv')
 
 if [[ -z "$sleepers" ]]; then echo "💤 no idle agents to send home"; exit 0; fi
 n=$(awk 'END{print NR}' <<<"$sleepers")
 
 echo "pasture: send $n idle agent(s) home  (swap used now: $(swap_used))"
-while IFS=$'\t' read -r pane agent cwd _; do
+while IFS=$'\t' read -r pane agent cwd _ _; do
   printf '  %-7s %-7s %s\n' "$pane" "$agent" "${cwd##*/}"
 done <<<"$sleepers"
 if $force; then echo "  plan: quit all, wait ${timeout}s, then force-stop survivors"
 else            echo "  plan: quit all, wait ${timeout}s, list survivors (add --force to stop them)"; fi
+$close && echo "        then close their tabs where nothing else runs (hx, servers, builds stay)"
 if ! $yes; then
   echo "  (re-run with --yes; human-gated — call back later with: pasture agent sweep --recall)" >&2
   exit 3
@@ -84,12 +203,12 @@ fi
 # 1. ledger first, so a crash mid-sweep still knows who left.
 mkdir -p "$(dirname "$ledger")"
 now=$(date '+%Y-%m-%d %H:%M')
-while IFS=$'\t' read -r pane agent cwd title; do
+while IFS=$'\t' read -r pane agent cwd title _; do
   printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$pane" "$agent" "$cwd" "$title" >>"$ledger"
 done <<<"$sleepers"
 
 # 2. everyone's quit at once, then wait for them to leave herdr's list.
-while IFS=$'\t' read -r pane agent _ _; do
+while IFS=$'\t' read -r pane agent _ _ _; do
   case "$agent" in
     claude|codex) quit=/exit ;;
     grok|agy)     quit=/quit ;;
@@ -101,7 +220,7 @@ done <<<"$sleepers"
 left() { # survivors, as "pane<TAB>agent" lines
   local now_list
   now_list=$(herdr agent list | jq -r '.result.agents[] | "\(.pane_id)\t\(.agent)"')
-  while IFS=$'\t' read -r pane agent _ _; do
+  while IFS=$'\t' read -r pane agent _ _ _; do
     grep -qxF "$pane	$agent" <<<"$now_list" && printf '%s\t%s\n' "$pane" "$agent"
   done <<<"$sleepers"
   return 0
@@ -126,5 +245,11 @@ echo "👋 $gone/$n home  (swap used now: $(swap_used); macOS reclaims it gradua
 if [[ -n "$still" ]]; then
   while IFS=$'\t' read -r pane agent; do echo "  ⚠️  $pane $agent still running"; done <<<"$still"
   $force || echo "  re-run with --force to stop them, or: pasture agent stop <pane> --yes"
+fi
+
+# 4. their tabs (a survivor's tab stays: its pane still runs the agent)
+if $close; then
+  tabs=$(cut -f5 <<<"$sleepers" | awk 'NF && !seen[$0]++' | tr '\n' ' ')
+  [[ -n "$tabs" ]] && tidy_tabs "$tabs" true
 fi
 echo "  call one back: pasture agent sweep --recall"

@@ -33,14 +33,15 @@ fi
 if [[ "${1:-}" == "--sweep" ]]; then
   # 💤 Send the sleeping sheep home — the engine is `pasture agent sweep`
   # (idle only; skips this pane, the focused one and named reviewers; writes
-  # a ledger so `pasture agent sweep --recall` can call them back). It prints
-  # its plan and exits 3 without --yes; the y/N here is the human's yes.
-  rc=0; pasture agent sweep || rc=$?
+  # a ledger so `pasture agent sweep --recall` can call them back). --close
+  # then shuts their tabs where nothing else runs (hx, servers stay). It
+  # prints its plan and exits 3 without --yes; the y/N here is the human's yes.
+  rc=0; pasture agent sweep --close || rc=$?
   if (( rc == 3 )); then
     read -r -p "💤 send them home? [y/N] (F = also force-stop the ones that ignore quit) " ok || exit 0
     case "$ok" in
-      [yY]*) pasture agent sweep --yes || true ;;
-      [fF]*) pasture agent sweep --yes --force || true ;;
+      [yY]*) pasture agent sweep --yes --close || true ;;
+      [fF]*) pasture agent sweep --yes --close --force || true ;;
     esac
   fi
   read -r -p "Enter to close " _ || true
