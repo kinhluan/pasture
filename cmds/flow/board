@@ -1,0 +1,189 @@
+#!/usr/bin/env bash
+# summary: SDLC pipeline board — what lifecycle stage every agent's task sits at
+# usage:   pasture flow board [--no-pr] [--json]
+# safety:  read
+#
+# pasture runs tasks in parallel (one agent, one worktree, one branch), so "what
+# stage is each task at" is scattered across herdr, git and the forge. This
+# joins them into one pipeline view. Per task (an agent's worktree) it infers a
+# stage from signals the task did not have to report:
+#
+#   🌱 spawned      worktree + agent, no commit yet
+#   ⌨️  coding        commits not pushed, or a dirty tree, or agent working
+#   📤 review-ready  pushed, no PR open yet
+#   👀 in-review     PR open, awaiting review
+#   🔧 changes       PR open, changes requested
+#   🔁 ci            PR open, checks running or failing
+#   ✅ mergeable     PR open, approved + checks green
+#   🔀 merged        PR merged (worktree can be swept: pasture-task --done)
+#   ⛔ blocked       agent waiting on you (overlaid on its stage)
+#
+# PR data comes from `gh` per GitHub repo (one call each, in parallel). --no-pr
+# skips the network and shows only the local stages. Read-only.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need herdr jq git
+
+no_pr=false json=false
+while (( $# )); do
+  case "$1" in
+    --no-pr) no_pr=true; shift ;;
+    --json)  json=true; shift ;;
+    *) usage "pasture flow board [--no-pr] [--json]" ;;
+  esac
+done
+
+dir=$(mktemp -d); trap 'rm -rf "$dir"' EXIT
+san() { tr -d '[:cntrl:]'; }
+
+# --- one row per agent task: pane, agent, status, cwd ------------------------
+rows=$(herdr agent list 2>/dev/null | jq -r \
+  '.result.agents[]? | [.pane_id,.agent,.agent_status,(.cwd//"")]|@tsv') || die "could not reach herdr"
+[[ -n "$rows" ]] || { $json && echo '[]' || echo "no agents"; exit 0; }
+
+# --- local git signals per task (one US line to stdout) ----------------------
+# pane \037 agent \037 status \037 repo \037 branch \037 ahead \037 dirty \037 pushed \037 ghpath
+task_row() {
+  local pane="$1" agent="$2" status="$3" cwd; cwd=$(printf '%s' "$4" | san)
+  local repo="" branch="" ahead=0 dirty=0 pushed=false ghpath="" base b url hr host p
+  if [[ -n "$cwd" ]] && git -C "$cwd" rev-parse --git-dir >/dev/null 2>&1; then
+    repo=$(basename "$(git -C "$cwd" rev-parse --show-toplevel 2>/dev/null)")
+    branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null | san)
+    base=$(git -C "$cwd" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##') || true
+    if [[ -z "$base" ]]; then
+      for b in main master; do git -C "$cwd" rev-parse --verify -q "origin/$b" >/dev/null 2>&1 && { base="$b"; break; }; done
+    fi
+    ahead=$(git -C "$cwd" rev-list --count "origin/${base:-main}..HEAD" 2>/dev/null || echo 0)
+    # No `git status` here: on a huge monorepo it is seconds, and it only told
+    # "coding" from "spawned" when ahead==0 — which the agent's own `working`
+    # status already tells us, for free. dirty stays 0.
+    if git -C "$cwd" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+      [[ "$(git -C "$cwd" rev-list --count '@{u}..HEAD' 2>/dev/null || echo 1)" == 0 ]] && pushed=true
+    fi
+    if ! $no_pr; then
+      url=$(git -C "$cwd" remote get-url origin 2>/dev/null || true)
+      case "$url" in
+        *://*) hr="${url#*://}"; hr="${hr#*@}"; host="${hr%%[/:]*}" ;;
+        *@*:*) hr="${url#*@}";   host="${hr%%:*}" ;;
+        *)     host="" ;;
+      esac
+      host=$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')
+      case "$host" in
+        github.com|*.github.com)
+          case "$url" in
+            *://*) p="${url#*://}"; p="${p#*@}"; ghpath="${p#*/}" ;;
+            *@*:*) ghpath="${url#*:}" ;;
+          esac
+          ghpath="${ghpath%.git}" ;;
+      esac
+    fi
+  fi
+  printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n' \
+    "$pane" "$agent" "$status" "$repo" "$branch" "$ahead" "$dirty" "$pushed" "$ghpath"
+}
+
+# Fan the per-task git work out in parallel (each worktree is independent);
+# the slow repos then overlap instead of adding up.
+i=0
+while IFS=$'\t' read -r pane agent status cwd; do
+  [[ -n "$pane" ]] || continue
+  i=$((i + 1))
+  task_row "$pane" "$agent" "$status" "$cwd" >"$dir/task.$i" &
+done <<<"$rows"
+wait
+cat "$dir"/task.* 2>/dev/null >"$dir/tasks" || true
+# GitHub repos to query = the ghpath column, deduped.
+awk -F'\037' '$9!=""{print $9}' "$dir/tasks" | sort -u >"$dir/ghrepos" || true
+
+# --- fetch PRs: one `gh pr list` per unique GitHub repo, in parallel ---------
+: >"$dir/prs"   # lines: ghpath \037 branch \037 state \037 review \037 checks
+if ! $no_pr && command -v gh >/dev/null && [[ -s "$dir/ghrepos" ]]; then
+  while read -r gp; do
+    [[ -n "$gp" ]] || continue
+    (
+      gh pr list --repo "$gp" --state all -L 60 \
+        --json headRefName,state,reviewDecision,statusCheckRollup 2>/dev/null \
+      | jq -r --arg gp "$gp" '.[]? |
+          [ $gp, .headRefName, .state, (.reviewDecision // ""),
+            ( (.statusCheckRollup // []) as $c
+              | if ($c|length)==0 then "none"
+                elif ($c|map(.conclusion // .state)|any(.=="FAILURE" or .=="ERROR" or .=="CANCELLED" or .=="TIMED_OUT")) then "red"
+                elif ($c|map(.conclusion // .state)|any(.==null or .=="PENDING" or .=="IN_PROGRESS" or .=="QUEUED" or .=="WAITING")) then "pending"
+                else "green" end ) ]
+          | join("\u001f")' >"$dir/pr.$$.$RANDOM" 2>/dev/null || true
+    ) &
+  done < <(sort -u "$dir/ghrepos")
+  wait
+  cat "$dir"/pr.*.* 2>/dev/null >"$dir/prs" || true
+fi
+
+# --- infer a stage per task -------------------------------------------------
+pr_for() { # $1=ghpath $2=branch  -> "state\037review\037checks" or empty
+  [[ -n "$1" && -n "$2" ]] || return 0
+  awk -F'\037' -v g="$1" -v b="$2" '$1==g && $2==b {print $3"\037"$4"\037"$5; exit}' "$dir/prs"
+}
+
+: >"$dir/rec"
+while IFS=$'\037' read -r pane agent status repo branch ahead dirty pushed ghpath; do
+  [[ -n "$pane" ]] || continue
+  stage="coding"
+  pr=$(pr_for "$ghpath" "$branch")
+  if [[ -n "$pr" ]]; then
+    IFS=$'\037' read -r pstate preview pchecks <<<"$pr"
+    case "$pstate" in
+      MERGED) stage="merged" ;;
+      OPEN)
+        if   [[ "$pchecks" == red ]]; then stage="ci"
+        elif [[ "$pchecks" == pending ]]; then stage="ci"
+        elif [[ "$preview" == APPROVED ]]; then stage="mergeable"
+        elif [[ "$preview" == CHANGES_REQUESTED ]]; then stage="changes"
+        else stage="in-review"; fi ;;
+      *) stage="review-ready" ;;   # CLOSED-no-merge: treat as back-to-local
+    esac
+  else
+    if   [[ "$pushed" == true && "${ahead:-0}" != 0 ]]; then stage="review-ready"
+    elif [[ "${ahead:-0}" != 0 ]]; then stage="coding"
+    elif [[ "$status" == working ]]; then stage="coding"   # editing on base, no commit yet
+    else stage="spawned"; fi
+  fi
+  blocked=false; [[ "$status" == blocked ]] && blocked=true
+  printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\n' \
+    "$pane" "$agent" "$repo" "$branch" "$stage" "$blocked" "${dirty:-0}" >>"$dir/rec"
+done <"$dir/tasks"
+
+# stage ordering along the pipeline (blocked floats to the top within its group)
+order='spawned coding review-ready in-review changes ci mergeable merged'
+records=$(jq -Rn --arg order "$order" '
+  ($order|split(" ")) as $ord |
+  [ inputs | split("\u001f") |
+    { pane:.[0],agent:.[1],repo:.[2],branch:.[3],stage:.[4],
+      blocked:(.[5]=="true"),dirty:(.[6]|tonumber?) } ]
+  | sort_by([(if .blocked then 0 else 1 end), (.stage as $s | ($ord|index($s)) // 99), .repo])' "$dir/rec")
+
+if $json; then echo "$records"; exit 0; fi
+
+icon() { case "$1" in
+  spawned) echo 🌱;; coding) echo ⌨️ ;; review-ready) echo 📤;; in-review) echo 👀;;
+  changes) echo 🔧;; ci) echo 🔁;; mergeable) echo ✅;; merged) echo 🔀;; *) echo ❔;; esac; }
+label() { case "$1" in
+  spawned) echo spawned;; coding) echo coding;; review-ready) echo "review-ready";;
+  in-review) echo "in-review";; changes) echo "changes-req";; ci) echo "CI";;
+  mergeable) echo mergeable;; merged) echo merged;; *) echo "$1";; esac; }
+amaker() { case "$1" in claude) echo 🤖;; codex) echo 🧠;; grok) echo ⚡;; agy) echo 🪐;; *) echo 🐑;; esac; }
+
+n=$(jq length <<<"$records")
+nb=$(jq '[.[]|select(.blocked)]|length' <<<"$records")
+echo "🐑 flock pipeline — $n task(s)$( (( nb>0 )) && printf ' · ⛔ %s blocked' "$nb")"
+
+prev=""
+y=$'\033[90m'; rst=$'\033[0m'
+jq -r '.[] | [.stage,.pane,.agent,.repo,.branch,(if .blocked then "1" else "0" end)]|@tsv' <<<"$records" \
+| while IFS=$'\t' read -r stage pane agent repo branch blk; do
+    if [[ "$stage" != "$prev" ]]; then
+      cnt=$(jq --arg s "$stage" '[.[]|select(.stage==$s)]|length' <<<"$records")
+      printf '\n%s %-13s %s(%s)%s\n' "$(icon "$stage")" "$(label "$stage")" "$y" "$cnt" "$rst"
+      prev="$stage"
+    fi
+    mk=""; [[ "$blk" == 1 ]] && mk=" ⛔"
+    printf '   %-7s %s %-24s %s%s\n' "$pane" "$(amaker "$agent")" "$repo" "$branch" "$mk"
+  done
