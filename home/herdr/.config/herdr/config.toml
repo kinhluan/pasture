@@ -13,8 +13,13 @@ status_indicators = "symbols"
 # right side of the tab bar, and pane labels (set by pasture-layout). Sidebar
 # rows take no free text, but pasture-icons feeds them `$icon` metadata.
 window_title = "🐑 {workspace} · {tab}"
+# `command` runs on the herdr server via /bin/sh -lc (login shell → ~/.local/bin
+# on PATH), every interval_seconds, non-blocking; herdr takes the last line and
+# strips ANSI. `pasture sys line` prints  load N× ▂▃▅▇  mem N% ▃▄▆█  — the
+# machine-busy signal while several agents + builds run (see cmds/sys/line).
 tab_bar_right = [
   { type = "zoom" },
+  { type = "command", command = "pasture sys line", interval_seconds = 5, timeout_seconds = 3 },
   { type = "text", text = "🐑 pasture" },
   { type = "datetime", format = "🕐 %H:%M" },
 ]

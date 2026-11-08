@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# summary: One-line machine load + memory metric with trend sparklines (for a status line)
+# usage:   pasture sys line [--width N] [--load-only|--mem-only] [--plain] [--reset]
+# safety:  read
+#
+# Prints a compact, pollable line meant for herdr's tab_bar_right (type =
+# "command") or any status bar / prompt:
+#
+#     load 1.3× ▂▃▅▇  mem 61% ▃▄▆█
+#
+# load  = 1-minute load average ÷ CPU count, as a ratio. 1.0× means the run
+#         queue equals the core count (cores full); >1 means oversubscribed —
+#         the signal that matters while running several agents and builds.
+#         Read from sysctl, so each poll costs ~0ms and spawns nothing (unlike
+#         `top`/`iostat`, which would add load just to measure it).
+# mem   = (active + wired + compressor) pages ÷ total RAM. Reclaimable pages
+#         (inactive, speculative, purgeable, free) count as available, so this
+#         tracks real pressure / swap risk, not Activity Monitor's "used".
+#
+# The sparkline is the recent trend: each run appends one sample to a tiny ring
+# buffer under ${XDG_CACHE_HOME:-~/.cache}/pasture and renders the last --width
+# of them (default 12). load scales to its own recent range (trend shape); mem
+# scales 0–100%. Plain text only (no ANSI), so a tab bar renders it verbatim.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+
+width=12 want_load=1 want_mem=1 plain=0 reset=0
+while (( $# )); do
+  case "$1" in
+    --width)     width="${2:?}"; shift 2 ;;
+    --load-only) want_mem=0; shift ;;
+    --mem-only)  want_load=0; shift ;;
+    --plain)     plain=1; shift ;;
+    --reset)     reset=1; shift ;;
+    *) usage "pasture sys line [--width N] [--load-only|--mem-only] [--plain] [--reset]" ;;
+  esac
+done
+[[ "$width" =~ ^[0-9]+$ && "$width" -ge 1 ]] || usage "--width wants a positive integer"
+
+state="${XDG_CACHE_HOME:-$HOME/.cache}/pasture"
+mkdir -p "$state" 2>/dev/null || true
+
+if (( reset )); then rm -f "$state/sys-load.hist" "$state/sys-mem.hist"; echo "cleared sparkline history"; exit 0; fi
+
+# --- samplers (macOS) -------------------------------------------------------
+# load1 ÷ ncpu, two decimals. sysctl prints: { 1.23 1.10 0.98 }
+load_ratio() {
+  local la ncpu
+  la=$(sysctl -n vm.loadavg 2>/dev/null) || return 1
+  ncpu=$(sysctl -n hw.ncpu 2>/dev/null) || ncpu=1
+  awk -v s="$la" -v n="$ncpu" 'BEGIN{
+    gsub(/[{}]/,"",s); split(s,a," "); if(n<1)n=1;
+    printf "%.2f", a[1]/n }'
+}
+# (active + wired + compressor) pages ÷ total RAM, as an integer percent.
+mem_pct() {
+  local total page vm
+  total=$(sysctl -n hw.memsize 2>/dev/null)   || return 1
+  page=$(sysctl -n hw.pagesize 2>/dev/null)   || return 1
+  vm=$(vm_stat 2>/dev/null)                    || return 1
+  awk -v total="$total" -v page="$page" '
+    /Pages active/                 {a=$3}
+    /Pages wired down/             {w=$4}
+    /Pages occupied by compressor/ {c=$5}
+    END{
+      gsub(/\./,"",a); gsub(/\./,"",w); gsub(/\./,"",c);
+      used=(a+w+c)*page;
+      if(total<=0){print 0; exit}
+      p=int(used/total*100 + 0.5); if(p<0)p=0; if(p>100)p=100; print p }' <<<"$vm"
+}
+
+# --- ring buffer: append $2 to file $1, keep last $width -------------------
+push() {
+  local f="$1" v="$2" hist=""
+  [[ -f "$f" ]] && hist=$(cat "$f" 2>/dev/null)
+  # shellcheck disable=SC2086  # split the space-separated history into samples
+  set -- $hist "$v"
+  while (( $# > width )); do shift; done
+  printf '%s\n' "$*" > "$f" 2>/dev/null || true
+  printf '%s' "$*"
+}
+
+# --- sparkline --------------------------------------------------------------
+# spark auto <v1 v2 ...>   scale to the series' own min..max (trend shape)
+# spark 0 100 <v1 ...>     scale to a fixed lo..hi (absolute)
+# One awk pass turns every sample into a level 0–7; bash maps those to blocks.
+spark() {
+  local blocks=(▁ ▂ ▃ ▄ ▅ ▆ ▇ █) out="" lo hi lvls i
+  if [[ "$1" == auto ]]; then shift; lo=""; hi=""; else lo="$1" hi="$2"; shift 2; fi
+  lvls=$(awk -v lo="$lo" -v hi="$hi" '{
+    n=NF; for(i=1;i<=n;i++) v[i]=$i;
+    if(lo==""){lo=v[1]; hi=v[1]; for(i=1;i<=n;i++){if(v[i]<lo)lo=v[i]; if(v[i]>hi)hi=v[i]}}
+    r=hi-lo; if(r<=0)r=1;
+    for(i=1;i<=n;i++){x=int((v[i]-lo)/r*7+0.5); if(x<0)x=0; if(x>7)x=7; printf "%d ", x}
+  }' <<<"$*")
+  for i in $lvls; do out+="${blocks[$i]}"; done
+  printf '%s' "$out"
+}
+
+out=""
+if (( want_load )); then
+  lv=$(load_ratio) || lv=""
+  if [[ -n "$lv" ]]; then
+    hist=$(push "$state/sys-load.hist" "$lv")
+    seg=$(printf 'load %.1f×' "$lv")
+    # shellcheck disable=SC2086  # $hist is a space-separated series, split on purpose
+    (( plain )) || seg+=" $(spark auto $hist)"
+    out+="$seg"
+  fi
+fi
+if (( want_mem )); then
+  mv=$(mem_pct) || mv=""
+  if [[ -n "$mv" ]]; then
+    hist=$(push "$state/sys-mem.hist" "$mv")
+    seg="mem ${mv}%"
+    # shellcheck disable=SC2086  # $hist is a space-separated series, split on purpose
+    (( plain )) || seg+=" $(spark 0 100 $hist)"
+    [[ -n "$out" ]] && out+="  "
+    out+="$seg"
+  fi
+fi
+
+[[ -n "$out" ]] || die "could not sample load or memory on this system"
+printf '%s\n' "$out"

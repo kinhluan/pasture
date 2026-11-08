@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# summary: Stop an agent without waiting for it to cooperate — graceful, then forced
+# usage:   pasture agent stop <pane> [--force] [--yes] [--timeout SECONDS]
+# safety:  external
+#
+# A control action over the flock, so it is HUMAN-gated: it prints its plan and
+# does nothing without --yes. An agent must not stop another agent on its own —
+# a looping or hostile one could silence its reviewer or clear its rivals (same
+# rule as "never answer another agent's approval dialog for the user").
+#
+# Escalation, so a wedged or ignoring agent still dies:
+#   1. graceful — send the agent's own quit (/exit, /quit) and wait --timeout
+#      (default 10s) for its process to leave. A courtesy with a deadline.
+#   2. herdr pane close — herdr ends the pane's process tree.
+#   3. kill -TERM the whole process set, then -KILL any survivor.
+# --force skips step 1 (straight to pane close + kill). Sending a quit command
+# is not answering an approval dialog; if the agent is blocked, step 1 simply
+# fails and we escalate — we never click through its dialog.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need herdr jq
+
+pane="" force=false yes=false timeout=10
+while (( $# )); do
+  case "$1" in
+    --force)   force=true; shift ;;
+    --yes|-y)  yes=true; shift ;;
+    --timeout) timeout="${2:?}"; shift 2 ;;
+    -*)        usage "pasture agent stop <pane> [--force] [--yes] [--timeout SECONDS]" ;;
+    *)         pane="$1"; shift ;;
+  esac
+done
+[[ -n "$pane" ]] || usage "pasture agent stop <pane> [--force] [--yes] [--timeout SECONDS]"
+
+# Never stop the pane this command runs in — don't saw off the branch we sit on.
+[[ -n "${HERDR_PANE_ID:-}" && "$pane" == "$HERDR_PANE_ID" ]] \
+  && die "refusing to stop '$pane' — that's the pane I'm running in"
+
+row=$(herdr agent list 2>/dev/null | jq -r --arg p "$pane" \
+  '.result.agents[]? | select(.pane_id==$p) | [.agent,.agent_status,(.cwd//"")]|@tsv') || die "could not reach herdr"
+[[ -n "$row" ]] || die "no agent at pane '$pane' (herdr agent list)"
+IFS=$'\t' read -r agent status cwd <<<"$row"
+
+case "$agent" in
+  claude|codex) quit=/exit ;;
+  grok|agy)     quit=/quit ;;
+  *)            quit="" ;;
+esac
+
+pids=$(agent_pidset "$pane" "$agent" | tr '\n' ' ')
+root=$(awk '{print $1; exit}' <<<"$pids")
+
+# --- plan; nothing happens without --yes ------------------------------------
+echo "pasture: stop $agent at $pane ($status, ${cwd##*/})  root pid ${root:-?}"
+if $force; then
+  echo "  plan: herdr pane close → kill -TERM/-KILL the process set (skip graceful)"
+else
+  echo "  plan: send $quit, wait ${timeout}s → else herdr pane close → else kill -TERM/-KILL"
+fi
+if ! $yes; then
+  echo "  (re-run with --yes to do it; this is a human-gated action, not for an agent to call)" >&2
+  exit 3
+fi
+
+alive() { [[ -n "$root" ]] && kill -0 "$root" 2>/dev/null; }
+killset() { # $1 = signal
+  local p
+  for p in $pids; do kill -0 "$p" 2>/dev/null && kill "-$1" "$p" 2>/dev/null || true; done
+}
+
+# 1. graceful
+if ! $force && [[ -n "$quit" ]]; then
+  herdr agent prompt "$pane" "$quit" >/dev/null 2>&1 || true
+  for _ in $(seq 1 "$timeout"); do alive || break; sleep 1; done
+  if ! alive; then echo "pasture: $pane stopped (graceful $quit)"; exit 0; fi
+  echo "pasture: $pane did not quit in ${timeout}s — escalating" >&2
+fi
+
+# 2. herdr pane close
+herdr pane close "$pane" >/dev/null 2>&1 || true
+for _ in 1 2 3; do alive || break; sleep 1; done
+if ! alive; then echo "pasture: $pane stopped (herdr pane close)"; exit 0; fi
+
+# 3. signals: TERM, then KILL the survivors
+echo "pasture: $pane still up — kill -TERM" >&2
+killset TERM
+for _ in 1 2; do alive || break; sleep 1; done
+if alive; then echo "pasture: kill -KILL" >&2; killset KILL; sleep 1; fi
+
+if alive; then
+  die "could not stop $pane (root pid $root still alive); check 'pasture agent ps $pane'"
+fi
+echo "pasture: $pane stopped (signal)"
