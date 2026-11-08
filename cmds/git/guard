@@ -25,21 +25,8 @@ remote_name="${1:-}" remote_url="${2:-}"
 
 host=$(remote_host "$remote_url")   # lowercased, ssh-alias-resolved
 
-# Hosts the user has declared internal, for when the forge can't answer.
-is_internal_host() {
-  local h="$1" f="$HOME/.config/pasture/internal-hosts" line item list="${PASTURE_INTERNAL_HOSTS:-}"
-  [[ -z "$h" ]] && return 1
-  for item in ${list//,/ }; do
-    [[ "$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" == "$h" ]] && return 0
-  done
-  [[ -f "$f" ]] || return 1
-  while IFS= read -r line; do
-    line="${line%%#*}"
-    line=$(printf '%s' "$line" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
-    [[ -n "$line" && "$line" == "$h" ]] && return 0
-  done < "$f"
-  return 1
-}
+# is_internal_host (the user's declared-internal allowlist) comes from lib.sh,
+# shared with `pasture git visibility`.
 
 vis=$("$PASTURE_DIR/cmds/git/visibility" "$remote_url" 2>/dev/null || echo unknown)
 case "$vis" in
