@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# summary: Pre-push gate — block a push to a PUBLIC remote that carries a secret
+# usage:   pasture git guard <remote-name> <remote-url>   (reads git pre-push stdin)
+# safety:  read
+#
+# Written to be a git pre-push hook body (`pasture git protect` installs it).
+# Reads the ref lines git feeds a pre-push hook on stdin, finds the commits
+# being pushed, and runs gitleaks over just those commits:
+#   public remote        → a secret BLOCKS the push (exit 1)
+#   private / internal   → a secret only warns; the push proceeds
+# Visibility comes from `pasture git visibility`. When the forge can't answer
+# (unknown), the push is BLOCKED by default — fail closed — unless the host is
+# on the user-local internal allowlist (one host per line in
+# ~/.config/pasture/internal-hosts, or $PASTURE_INTERNAL_HOSTS, space/comma
+# separated). That is the only way a host reads as internal without the forge
+# confirming it, so a mis-cased host, an ssh alias, or an unknown public host
+# cannot silently pass. Override a real block the human way:
+#   git push --no-verify   — an agent must not do this on the user's behalf.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need git
+
+remote_name="${1:-}" remote_url="${2:-}"
+[[ -n "$remote_url" ]] || usage "pasture git guard <remote-name> <remote-url>  (reads pre-push stdin)"
+
+host=$(remote_host "$remote_url")   # lowercased, ssh-alias-resolved
+
+# Hosts the user has declared internal, for when the forge can't answer.
+is_internal_host() {
+  local h="$1" f="$HOME/.config/pasture/internal-hosts" line item list="${PASTURE_INTERNAL_HOSTS:-}"
+  [[ -z "$h" ]] && return 1
+  for item in ${list//,/ }; do
+    [[ "$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" == "$h" ]] && return 0
+  done
+  [[ -f "$f" ]] || return 1
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line=$(printf '%s' "$line" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ -n "$line" && "$line" == "$h" ]] && return 0
+  done < "$f"
+  return 1
+}
+
+vis=$("$PASTURE_DIR/cmds/git/visibility" "$remote_url" 2>/dev/null || echo unknown)
+case "$vis" in
+  public)            public=true ;;
+  private|internal)  public=false ;;
+  *) # unknown: fail closed — block unless the host is a declared-internal one
+     if is_internal_host "$host"; then public=false; else public=true; fi ;;
+esac
+
+if ! command -v gitleaks >/dev/null; then
+  $public && echo "pasture: pushing to $vis $host but gitleaks is not installed — cannot check for secrets (brew install gitleaks)" >&2
+  exit 0   # can't scan → don't block; warn only
+fi
+
+z=0000000000000000000000000000000000000000
+leaked=0
+while read -r _ localsha _ remotesha; do
+  [[ -z "${localsha:-}" || "$localsha" == "$z" ]] && continue   # nothing / branch deletion
+  if [[ "$remotesha" == "$z" ]]; then
+    # New branch. To a public remote, scan every reachable commit: a secret
+    # that already sits on a *private* remote must not slip out just because
+    # `--not --remotes` would exclude it. For a non-public target, the lighter
+    # "commits not already on any remote" is enough.
+    if $public; then logopts="$localsha"; else logopts="$localsha --not --remotes"; fi
+  else
+    logopts="$remotesha..$localsha"           # existing branch: just the new commits
+  fi
+  rc=0
+  gitleaks git --log-opts="$logopts" --redact --no-banner -l error >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0) : ;;
+    1) leaked=$((leaked+1)); echo "pasture: gitleaks found a secret in commits being pushed ($logopts)" >&2 ;;
+    *) echo "pasture: gitleaks could not scan $logopts (rc $rc); not blocking on a tool error" >&2 ;;
+  esac
+done
+
+(( leaked == 0 )) && exit 0
+
+if $public; then
+  if [[ "$vis" == public ]]; then
+    echo "pasture: BLOCKED — remote '$remote_name' is public ($remote_url). A secret here would go public." >&2
+  else
+    echo "pasture: BLOCKED — cannot confirm '$remote_name' ($host) is private, so treating it as public." >&2
+    echo "        If '$host' is an internal remote, add it: echo $host >> ~/.config/pasture/internal-hosts" >&2
+  fi
+  echo "        Remove and ROTATE the secret (a committed secret is compromised)." >&2
+  echo "        Human override only: git push --no-verify" >&2
+  exit 1
+fi
+echo "pasture: secret found, but '$remote_name' ($host) is $vis — allowing. Still remove and ROTATE it." >&2
+exit 0

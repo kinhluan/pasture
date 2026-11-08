@@ -62,3 +62,53 @@ agent_pidset() {
   if [[ -z "$root" ]]; then awk -F'\t' '{print $2}' <<<"$fg"; return 0; fi
   echo "$root"; pdescendants "$root"
 }
+
+# Lowercased host of a git URL or scp-like address (git@host:path), with an
+# ssh config alias resolved to its real hostname. Empty when it can't parse a
+# host. Security-sensitive: callers decide public vs private by host, so a
+# missed or mis-cased host must not silently read as a different one.
+remote_host() {
+  local url="$1" host="" rest real
+  case "$url" in
+    *://*) rest="${url#*://}"; rest="${rest#*@}"; host="${rest%%[/:]*}" ;;
+    *@*:*) rest="${url#*@}";   host="${rest%%:*}" ;;
+    *:*)   host="${url%%:*}" ;;
+    *) return 0 ;;
+  esac
+  # An ssh config Host alias (e.g. gh-personal) resolves to its real hostname;
+  # -G only prints config, never connects. A plain hostname maps to itself.
+  if command -v ssh >/dev/null 2>&1; then
+    real=$(ssh -G "$host" 2>/dev/null | awk '/^hostname /{print $2; exit}')
+    [[ -n "$real" ]] && host="$real"
+  fi
+  printf '%s' "$host" | tr '[:upper:]' '[:lower:]'
+}
+
+# Run a command with a wall-clock limit, passing its stdout straight through.
+# Returns the command's exit status, or non-zero if it ran too long. Used so a
+# forge lookup on an unreachable host (e.g. a company GitLab off VPN) cannot
+# hang a git hook. Uses coreutils `timeout`/`gtimeout` when present, else perl's
+# alarm (exec replaces perl, so the limit applies to the real process) — both
+# ship on macOS or come with the tools these commands already need.
+with_timeout() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then timeout "$secs" "$@"; return; fi
+  if command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"; return; fi
+  if command -v perl >/dev/null 2>&1; then
+    # Fork the command and, on the alarm, send it SIGTERM then SIGKILL. A plain
+    # alarm sends SIGALRM, which Go binaries (gh, glab) ignore; TERM/KILL they
+    # honour. The child inherits our stdout, so its output flows through.
+    perl -e '
+      my $s = shift @ARGV;
+      my $pid = fork();
+      if (!defined $pid) { exec @ARGV or exit 127; }
+      if ($pid == 0) { exec @ARGV or exit 127; }
+      local $SIG{ALRM} = sub { kill "TERM", $pid; sleep 1; kill "KILL", $pid; };
+      alarm $s;
+      waitpid($pid, 0);
+      exit($? >> 8);
+    ' "$secs" "$@"
+    return
+  fi
+  "$@"   # no timeout tool available: run without a limit rather than fail
+}

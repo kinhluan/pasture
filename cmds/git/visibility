@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# summary: Ask the forge whether a git remote is public, private, or internal
+# usage:   pasture git visibility [remote|url]
+# safety:  read
+#
+# Resolves <remote> (default origin) to its URL, or takes a URL directly, then
+# asks the forge: gh for github.com, glab for a GitLab host. Prints one word:
+#   public | private | internal | unknown
+# unknown means the forge could not answer (host not github/gitlab, CLI missing
+# or unauthed, or the call failed). A caller decides what unknown means for it;
+# `pasture git guard` treats unknown as public only on the public SaaS hosts.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need git
+
+arg="${1:-origin}"
+if [[ "$arg" == *://* || "$arg" == *@*:* ]]; then
+  url="$arg"
+else
+  url=$(git remote get-url "$arg" 2>/dev/null) || die "no remote '$arg' (and not a URL)"
+fi
+
+# host is lowercased and ssh-alias-resolved; path is the owner/repo after it.
+host=$(remote_host "$url")
+path=""
+case "$url" in
+  *://*) rest="${url#*://}"; rest="${rest#*@}"; path="${rest#*/}" ;;
+  *@*:*) path="${url#*:}" ;;
+esac
+path="${path%.git}"     # strip trailing .git
+[[ -n "$host" && -n "$path" ]] || { echo unknown; exit 0; }
+
+lower() { tr '[:upper:]' '[:lower:]'; }
+
+case "$host" in
+  github.com|*.github.com)   # also ssh.github.com, and ssh aliases resolving there
+    command -v gh >/dev/null || { echo unknown; exit 0; }
+    v=$(with_timeout 8 gh repo view "$path" --json visibility -q .visibility | lower) || v=""
+    [[ -n "$v" ]] && echo "$v" || echo unknown ;;
+  gitlab.com|*.gitlab.com|gitlab.*|*.gitlab.*|git.*|*.git.*)
+    if ! command -v glab >/dev/null || ! command -v jq >/dev/null; then echo unknown; exit 0; fi
+    enc=$(printf '%s' "$path" | sed 's#/#%2F#g')
+    v=$(with_timeout 8 glab api --hostname "$host" "projects/$enc" | jq -r '.visibility // empty' 2>/dev/null | lower) || v=""
+    [[ -n "$v" ]] && echo "$v" || echo unknown ;;
+  *) echo unknown ;;
+esac
