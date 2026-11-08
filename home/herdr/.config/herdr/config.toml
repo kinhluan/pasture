@@ -112,6 +112,17 @@ description = "pasture collie (agent board)"
 width = "90%"
 height = "70%"
 
+# 🐑 The flock pipeline: what SDLC stage each task sits at. `flow board` prints
+# then exits, so pipe through less to hold the popup open (q to close, scroll,
+# -R keeps the colours). ~6s for the forge lookups; add --no-pr for instant.
+[[keys.command]]
+key = "ctrl+alt+f"
+type = "popup"
+command = "\"$HOME/.local/bin/pasture\" flow board | less -R"
+description = "flow board (SDLC pipeline)"
+width = "80%"
+height = "80%"
+
 # 🪜 The Sapling stack of the focused pane's repo (w opens it in the browser).
 [[keys.command]]
 key = "ctrl+alt+g"
