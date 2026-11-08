@@ -38,6 +38,15 @@ case "$host" in
     v=$(with_timeout 8 gh repo view "$path" --json visibility -q .visibility | lower) || v=""
     [[ -n "$v" ]] && echo "$v" || echo unknown ;;
   gitlab.com|*.gitlab.com|gitlab.*|*.gitlab.*|git.*|*.git.*)
+    # Only ask glab — and so only send its token — to gitlab.com (public SaaS)
+    # or a self-hosted host the user has explicitly declared internal. The glob
+    # above would otherwise match any attacker-chosen remote (git@git.evil.com),
+    # and `glab api --hostname HOST` would ship the GitLab token to it. An
+    # untrusted host returns unknown, which the guard already fails closed on.
+    case "$host" in
+      gitlab.com|*.gitlab.com) ;;
+      *) is_internal_host "$host" || { echo unknown; exit 0; } ;;
+    esac
     if ! command -v glab >/dev/null || ! command -v jq >/dev/null; then echo unknown; exit 0; fi
     enc=$(printf '%s' "$path" | sed 's#/#%2F#g')
     v=$(with_timeout 8 glab api --hostname "$host" "projects/$enc" | jq -r '.visibility // empty' 2>/dev/null | lower) || v=""

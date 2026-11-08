@@ -112,3 +112,23 @@ with_timeout() {
   fi
   "$@"   # no timeout tool available: run without a limit rather than fail
 }
+
+# Is $1 a host the user has declared internal (trusted), for when a forge can't
+# confirm visibility? Sources: $PASTURE_INTERNAL_HOSTS (space/comma separated)
+# and ~/.config/pasture/internal-hosts (one host per line, # comments). Used so
+# a self-hosted forge is only queried — and only sent a token — when the user
+# has explicitly trusted it; an unlisted host stays unknown and fails closed.
+is_internal_host() {
+  local h="$1" f="$HOME/.config/pasture/internal-hosts" line item list="${PASTURE_INTERNAL_HOSTS:-}"
+  [[ -z "$h" ]] && return 1
+  for item in ${list//,/ }; do
+    [[ "$(printf '%s' "$item" | tr '[:upper:]' '[:lower:]')" == "$h" ]] && return 0
+  done
+  [[ -f "$f" ]] || return 1
+  while IFS= read -r line; do
+    line="${line%%#*}"
+    line=$(printf '%s' "$line" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+    [[ -n "$line" && "$line" == "$h" ]] && return 0
+  done < "$f"
+  return 1
+}
