@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# summary: Free memory — send idle agents home, keep a ledger to call them back
+# usage:   pasture agent sweep [--yes] [--force] [--include-named] [--timeout S] | --recall
+# safety:  external
+#
+# Idle agents hold hundreds of MB each; a few dozen push a 16GB Mac into swap
+# while the CPU sits idle. Their sessions are saved on quit, so sending them
+# home is cheap: call one back when you need it (`--recall` prints how).
+#
+# Picks agents that are `idle` only. Never `done` (an answer you have not read),
+# `working` or `blocked`. Also skipped: the pane running this, the focused pane,
+# and named agents (pasture-duo reviewers idle between rounds) unless
+# --include-named.
+#
+# HUMAN-gated like `pasture agent stop`: prints the plan, does nothing without
+# --yes (exit 3). Not for an agent to call on the flock by itself.
+#
+#   1. writes each one to the ledger ~/.cache/pasture/swept.tsv
+#   2. sends every agent its own quit (/exit, /quit) at once, waits --timeout
+#      (default 8s). The pane stays as a shell, so layouts survive.
+#   3. survivors: listed — or, with --force, handed to `pasture agent stop
+#      --force` (pane close, then signals). Grok tends to ignore /quit.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+
+ledger="${XDG_CACHE_HOME:-$HOME/.cache}/pasture/swept.tsv"
+
+# How to call one back: resume the newest session in its directory.
+resume_cmd() { # $1 = agent
+  case "$1" in
+    claude) echo "claude --continue" ;;
+    codex)  echo "codex resume --last" ;;
+    grok)   echo "grok --resume" ;;
+    *)      echo "$1" ;;
+  esac
+}
+
+if [[ "${1:-}" == "--recall" ]]; then
+  [[ -s "$ledger" ]] || { echo "pasture: nobody swept yet ($ledger)"; exit 0; }
+  # Newest sweep first; one line per (agent, directory) — the latest wins.
+  sort -t$'\t' -k1,1r "$ledger" | awk -F'\t' '!seen[$3 FS $4]++' |
+  while IFS=$'\t' read -r when _pane agent cwd title; do
+    printf '%s  %-6s  %s\n      cd %q && %s\n' "$when" "$agent" "${title:0:60}" "$cwd" "$(resume_cmd "$agent")"
+  done
+  exit 0
+fi
+
+need herdr jq
+yes=false force=false named=false timeout=8
+while (( $# )); do
+  case "$1" in
+    --yes|-y)        yes=true; shift ;;
+    --force)         force=true; shift ;;
+    --include-named) named=true; shift ;;
+    --timeout)       timeout="${2:?}"; shift 2 ;;
+    *) usage "pasture agent sweep [--yes] [--force] [--include-named] [--timeout S] | --recall" ;;
+  esac
+done
+
+swap_used() { sysctl -n vm.swapusage 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="used") {print $(i+2); exit}}'; }
+
+# pane · agent · cwd · title, with control chars stripped (titles are untrusted).
+sleepers=$(herdr agent list | jq -r --arg me "${HERDR_PANE_ID:-}" --argjson named "$named" '
+  .result.agents[]
+  | select(.agent_status == "idle" and .focused != true and .pane_id != $me
+           and ($named or ((.name // "") == "")))
+  | [.pane_id, .agent, (.cwd // ""), (.terminal_title_stripped // "")]
+  | map(gsub("[[:cntrl:]]"; " ")) | @tsv')
+
+if [[ -z "$sleepers" ]]; then echo "💤 no idle agents to send home"; exit 0; fi
+n=$(awk 'END{print NR}' <<<"$sleepers")
+
+echo "pasture: send $n idle agent(s) home  (swap used now: $(swap_used))"
+while IFS=$'\t' read -r pane agent cwd _; do
+  printf '  %-7s %-7s %s\n' "$pane" "$agent" "${cwd##*/}"
+done <<<"$sleepers"
+if $force; then echo "  plan: quit all, wait ${timeout}s, then force-stop survivors"
+else            echo "  plan: quit all, wait ${timeout}s, list survivors (add --force to stop them)"; fi
+if ! $yes; then
+  echo "  (re-run with --yes; human-gated — call back later with: pasture agent sweep --recall)" >&2
+  exit 3
+fi
+
+# 1. ledger first, so a crash mid-sweep still knows who left.
+mkdir -p "$(dirname "$ledger")"
+now=$(date '+%Y-%m-%d %H:%M')
+while IFS=$'\t' read -r pane agent cwd title; do
+  printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$pane" "$agent" "$cwd" "$title" >>"$ledger"
+done <<<"$sleepers"
+
+# 2. everyone's quit at once, then wait for them to leave herdr's list.
+while IFS=$'\t' read -r pane agent _ _; do
+  case "$agent" in
+    claude|codex) quit=/exit ;;
+    grok|agy)     quit=/quit ;;
+    *)            continue ;;
+  esac
+  herdr agent prompt "$pane" "$quit" >/dev/null 2>&1 || true
+done <<<"$sleepers"
+
+left() { # survivors, as "pane<TAB>agent" lines
+  local now_list
+  now_list=$(herdr agent list | jq -r '.result.agents[] | "\(.pane_id)\t\(.agent)"')
+  while IFS=$'\t' read -r pane agent _ _; do
+    grep -qxF "$pane	$agent" <<<"$now_list" && printf '%s\t%s\n' "$pane" "$agent"
+  done <<<"$sleepers"
+  return 0
+}
+still=""
+for _ in $(seq 1 "$timeout"); do
+  sleep 1
+  still=$(left)
+  [[ -z "$still" ]] && break
+done
+
+# 3. survivors
+if [[ -n "$still" ]] && $force; then
+  while IFS=$'\t' read -r pane _; do
+    "$PASTURE_DIR/cmds/agent/stop" "$pane" --force --yes || true
+  done <<<"$still"
+  still=$(left)
+fi
+
+gone=$(( n - $(awk 'NF{c++} END{print c+0}' <<<"$still") ))
+echo "👋 $gone/$n home  (swap used now: $(swap_used); macOS reclaims it gradually)"
+if [[ -n "$still" ]]; then
+  while IFS=$'\t' read -r pane agent; do echo "  ⚠️  $pane $agent still running"; done <<<"$still"
+  $force || echo "  re-run with --force to stop them, or: pasture agent stop <pane> --yes"
+fi
+echo "  call one back: pasture agent sweep --recall"

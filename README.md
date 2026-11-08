@@ -175,7 +175,11 @@ The agents are the sheep; the collie watches them so you don't have to.
 - **Send home.** `⌃⌥X` quits every idle agent after one y/N, using each agent's
   own quit command so its session can be resumed. It skips agents with an unread
   answer, the focused one and named ones (pasture-duo reviewers). Panes stay
-  open as shells.
+  open as shells. Answer `F` to also force-stop the ones that ignore their quit.
+  Idle agents hold memory — a few dozen push a 16GB Mac into swap — so this is
+  the cheap fix; each one is written to a ledger, and
+  `pasture agent sweep --recall` prints the `cd … && claude --continue` (or
+  codex/grok) line to call one back. Headless: `pasture agent sweep --yes`.
 
 The collie only reads, tags and points: **it never answers an agent's prompts
 or approvals for you.** A click can't jump straight to the pane because the only
