@@ -177,6 +177,12 @@ gitleaks git --staged --redact --no-banner -l error || {
 }
 HOOK
   chmod +x "$hook"
+
+  # And a pre-push guard: block a secret being pushed to a PUBLIC remote
+  # (pasture's own remote is public). Same per-repo scope; preserves any
+  # existing pre-push hook. `pasture git protect` does the work.
+  ( cd "$PASTURE_DIR" && "$PASTURE_DIR/home/bin/.local/bin/pasture" git protect >/dev/null ) \
+    || warn "could not install the pre-push secret guard (pasture git protect)"
 }
 
 verify() {
