@@ -6,7 +6,8 @@
 #   pasture-collie --list   board only, no prompt (for scripts / agents)
 #   pasture-collie --jump   go straight to the agent that needs you most
 #                           (first blocked, else first done; ⌃⌥A)
-#   pasture-collie --sweep  quit every idle agent, after a y/N (⌃⌥X)
+#   pasture-collie --sweep  quit every idle agent, after a y/N (⌃⌥X);
+#                           engine: pasture agent sweep (--recall to call back)
 #
 # The barking half is the 🐕 sidebar tag from the pasture.collie plugin
 # (plugins/herdr-collie) plus herdr's own notifications ([ui.toast]).
@@ -30,39 +31,19 @@ if [[ "${1:-}" == "--jump" ]]; then
 fi
 
 if [[ "${1:-}" == "--sweep" ]]; then
-  # 💤 Send the sleeping sheep home: quit every idle agent, after one y/N.
-  # Only `idle` (done = an answer you have not read yet). Skipped: the pane
-  # running this, the focused one, and named agents (pasture-duo reviewers
-  # sit idle between rounds). The pane stays as a shell, so layouts survive,
-  # and the session can be resumed (claude --resume, codex resume, grok
-  # --resume).
-  sleepers=$(jq -r --arg me "${HERDR_PANE_ID:-}" '.result.agents[]
-    | select(.agent_status == "idle" and .focused != true
-             and .pane_id != $me and ((.name // "") == ""))
-    | [.pane_id, .agent, (.cwd // "" | split("/") | last)] | @tsv' <<<"$agents")
-  if [[ -z "$sleepers" ]]; then echo "💤 no sleeping sheep"; exit 0; fi
-  printf '  %-7s %-8s %s\n' pane agent repo
-  while IFS=$'\t' read -r pane agent repo; do
-    printf '  %-7s %-8s %s\n' "$pane" "$agent" "$repo"
-  done <<<"$sleepers"
-  n=$(grep -c . <<<"$sleepers")
-  read -r -p "💤 send these $n home? [y/N] " ok || exit 0
-  [[ "$ok" == [yY]* ]] || exit 0
-  while IFS=$'\t' read -r pane agent _; do
-    # Each TUI's own quit command (tested: Grok ignores /exit and ctrl+c).
-    case "$agent" in
-      claude|codex) quit=/exit ;;
-      grok|agy)     quit=/quit ;;
-      *)            echo "  ❔ $pane $agent: no known quit command, left alone"; continue ;;
+  # 💤 Send the sleeping sheep home — the engine is `pasture agent sweep`
+  # (idle only; skips this pane, the focused one and named reviewers; writes
+  # a ledger so `pasture agent sweep --recall` can call them back). --close
+  # then shuts their tabs where nothing else runs (hx, servers stay). It
+  # prints its plan and exits 3 without --yes; the y/N here is the human's yes.
+  rc=0; pasture agent sweep --close || rc=$?
+  if (( rc == 3 )); then
+    read -r -p "💤 send them home? [y/N] (F = also force-stop the ones that ignore quit) " ok || exit 0
+    case "$ok" in
+      [yY]*) pasture agent sweep --yes --close || true ;;
+      [fF]*) pasture agent sweep --yes --close --force || true ;;
     esac
-    herdr agent prompt "$pane" "$quit" >/dev/null 2>&1 || echo "  ❌ $pane $agent: could not send $quit"
-  done <<<"$sleepers"
-  sleep 3   # let them save their session and exit
-  still=$(herdr agent list | jq -r '.result.agents[] | "\(.pane_id)\t\(.agent)"')
-  while IFS=$'\t' read -r pane agent _; do
-    if grep -q "^$pane	$agent\$" <<<"$still"; then echo "  ⚠️  $pane $agent still running"
-    else echo "  👋 $pane $agent"; fi
-  done <<<"$sleepers"
+  fi
   read -r -p "Enter to close " _ || true
   exit 0
 fi
