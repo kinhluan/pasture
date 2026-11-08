@@ -54,6 +54,11 @@ subtree() {
 allpids=""
 while IFS=$'\t' read -r pane agent status cwd ws _focused; do
   [[ -n "$pane" ]] || continue
+  # Strip control chars from the untrusted path: a worktree an agent can name,
+  # and the source of our later display. This also removes a tab/newline (would
+  # break the delimited temp files) and our 0x1F field delimiter (would inject a
+  # field), and an ANSI escape (would spoof the board when a human reads it).
+  cwd=$(printf '%s' "$cwd" | tr -d '[:cntrl:]')
   # root = the foreground process whose argv0 is the agent (claude/codex/grok/agy)
   root=$(herdr pane process-info --pane "$pane" 2>/dev/null \
     | jq -r --arg a "$agent" '.result.process_info.foreground_processes[]?|select(.argv0==$a)|.pid' 2>/dev/null | head -1)
@@ -96,7 +101,7 @@ while IFS=$'\t' read -r pane agent status cwd ws branch root pids; do
   pinfo=$(awk -v pids=" $pids " -v root="$root" '
     BEGIN{n=split(pids,a," "); for(i=1;i<=n;i++) if(a[i]!="") want[a[i]]=1}
     $1 in want {
-      nm=$4; sub(/.*\//,"",nm)
+      nm=$4; sub(/.*\//,"",nm); gsub(/[[:cntrl:]]/,"",nm)   # a proc argv0 is attacker-set: no ANSI/delimiter bytes
       if(nm!="" && !(seen[nm]++)) names=names (names==""?"":" ") nm
       if($1==root){rcpu=$2; rup=$3} else if($2+0>30) hot=1
     }
@@ -104,8 +109,9 @@ while IFS=$'\t' read -r pane agent status cwd ws branch root pids; do
   IFS=$'\037' read -r rcpu rup bg_hot names <<<"$pinfo"
   sinfo=$(awk -F'\t' -v pids=" $pids " '
     BEGIN{n=split(pids,a," "); for(i=1;i<=n;i++) if(a[i]!="") want[a[i]]=1}
-    $1 in want && $2=="L" && !(ls[$3]++){L=L (L==""?"":" ") $3}
-    $1 in want && $2=="E" && !(es[$3]++){E=E (E==""?"":" ") $3}
+    { v=$3; gsub(/[[:cntrl:]]/,"",v) }
+    $1 in want && $2=="L" && !(ls[v]++){L=L (L==""?"":" ") v}
+    $1 in want && $2=="E" && !(es[v]++){E=E (E==""?"":" ") v}
     END{print L "\037" E}' <<<"$sockinfo")
   IFS=$'\037' read -r listen out <<<"$sinfo"
 
@@ -115,7 +121,7 @@ while IFS=$'\t' read -r pane agent status cwd ws branch root pids; do
   # One US-delimited line per agent; a single jq below turns them all into
   # JSON (31 jq spawns → 1). No field holds \037 or a newline.
   printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n' \
-    "$pane" "$agent" "$status" "${cwd##*/}" "$branch" "$(wslabel "$ws")" \
+    "$pane" "$agent" "$status" "${cwd##*/}" "$branch" "$(wslabel "$ws" | tr -d '[:cntrl:]')" \
     "$root" "$rcpu" "$rup" "$names" "$listen" "$out" "$warn" >>"$tmp.rec"
 done <"$tmp"
 
