@@ -20,28 +20,27 @@ else
   url=$(git remote get-url "$arg" 2>/dev/null) || die "no remote '$arg' (and not a URL)"
 fi
 
-# Split a scp-like (git@host:path) or URL (scheme://[user@]host[:port]/path).
-host="" path=""
+# host is lowercased and ssh-alias-resolved; path is the owner/repo after it.
+host=$(remote_host "$url")
+path=""
 case "$url" in
-  *://*) rest="${url#*://}"; rest="${rest#*@}"; host="${rest%%/*}"; path="${rest#*/}" ;;
-  *@*:*) rest="${url#*@}";   host="${rest%%:*}"; path="${rest#*:}" ;;
-  *) echo unknown; exit 0 ;;
+  *://*) rest="${url#*://}"; rest="${rest#*@}"; path="${rest#*/}" ;;
+  *@*:*) path="${url#*:}" ;;
 esac
-host="${host%%:*}"      # strip :port
 path="${path%.git}"     # strip trailing .git
-[[ -n "$path" ]] || { echo unknown; exit 0; }
+[[ -n "$host" && -n "$path" ]] || { echo unknown; exit 0; }
 
 lower() { tr '[:upper:]' '[:lower:]'; }
 
 case "$host" in
-  github.com)
+  github.com|*.github.com)   # also ssh.github.com, and ssh aliases resolving there
     command -v gh >/dev/null || { echo unknown; exit 0; }
-    v=$(gh repo view "$path" --json visibility -q .visibility 2>/dev/null | lower) || v=""
+    v=$(with_timeout 8 gh repo view "$path" --json visibility -q .visibility | lower) || v=""
     [[ -n "$v" ]] && echo "$v" || echo unknown ;;
-  gitlab.com|gitlab.*|*.gitlab.*|git.*)
+  gitlab.com|*.gitlab.com|gitlab.*|*.gitlab.*|git.*|*.git.*)
     if ! command -v glab >/dev/null || ! command -v jq >/dev/null; then echo unknown; exit 0; fi
     enc=$(printf '%s' "$path" | sed 's#/#%2F#g')
-    v=$(glab api --hostname "$host" "projects/$enc" 2>/dev/null | jq -r '.visibility // empty' 2>/dev/null | lower) || v=""
+    v=$(with_timeout 8 glab api --hostname "$host" "projects/$enc" | jq -r '.visibility // empty' 2>/dev/null | lower) || v=""
     [[ -n "$v" ]] && echo "$v" || echo unknown ;;
   *) echo unknown ;;
 esac
