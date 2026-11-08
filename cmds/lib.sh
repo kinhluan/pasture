@@ -38,3 +38,27 @@ stack_parent() {
 
 # Character-safe slug for branch names.
 slug() { tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' | sed 's/^-//; s/-$//' | cut -c1-40 | sed 's/-$//'; }
+
+# Every descendant pid of $1 (recursive), one per line. Catches a server an
+# agent started in the background — still its child — that a pane's foreground
+# process group would miss. (A process reparented to launchd is not found.)
+pdescendants() {
+  local kid
+  for kid in $(pgrep -P "$1" 2>/dev/null); do
+    echo "$kid"; pdescendants "$kid"
+  done
+}
+
+# The pids belonging to one agent pane: the agent's own process plus every
+# descendant. $1 = pane_id, $2 = agent name. The root is the foreground process
+# whose argv0 is the agent (claude/codex/grok/agy); with no match, falls back to
+# every foreground pid herdr reports for the pane. Needs herdr + jq.
+agent_pidset() {
+  local pane="$1" agent="$2" fg root
+  fg=$(herdr pane process-info --pane "$pane" 2>/dev/null \
+       | jq -r '.result.process_info.foreground_processes[]? | [.argv0,.pid]|@tsv' 2>/dev/null)
+  [[ -n "$fg" ]] || return 0
+  root=$(awk -F'\t' -v a="$agent" '$1==a{print $2; exit}' <<<"$fg")
+  if [[ -z "$root" ]]; then awk -F'\t' '{print $2}' <<<"$fg"; return 0; fi
+  echo "$root"; pdescendants "$root"
+}

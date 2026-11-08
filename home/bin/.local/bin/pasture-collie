@@ -113,24 +113,49 @@ done <<<"$rows"
 tmax=$(( cols - (5 + 4 + 3 + 8 + wmax + 1) - 1 ))
 (( tmax >= 10 )) || tmax=10
 
+# Which panes still hold a LISTEN server or a hot background job (read-only
+# recon via `pasture agent ps`). Skipped on --list so scripted calls stay fast,
+# and when pasture/ps can't answer — then no ⚠ shows, nothing breaks.
+warnset=" "
+if [[ "${1:-}" != "--list" ]] && command -v pasture >/dev/null 2>&1; then
+  warnset=" $(pasture agent ps --all --json 2>/dev/null | jq -r '.[]|select(.warn)|.pane' 2>/dev/null | tr '\n' ' ') "
+fi
+nwarn=$(awk '{print NF}' <<<"$warnset")
+(( nwarn > 0 )) && echo "🐕 ⚠ $nwarn still holding a server / background job (s<number> to stop)" && echo
+
 i=0
 panes=()
 while IFS=$'\t' read -r pane sicon aicon agent where title; do
   [[ -n "$pane" ]] || continue
   i=$((i + 1))
   panes+=("$pane")
+  mk=""; case "$warnset" in *" $pane "*) mk=" ⚠" ;; esac
   # Cut by characters, not bytes (printf's %.Ns could split a UTF-8 char),
   # then pad by hand: printf pads by bytes too. Wide (CJK/emoji) text can
   # still misalign: characters are not terminal cells.
   (( ${#where} <= wmax )) || where="${where:0:$((wmax - 1))}…"
   (( ${#title} <= tmax )) || title="${title:0:$((tmax - 1))}…"
   pad=$(( wmax - ${#where} ))
-  printf '%3d  %s  %s %-6s  %s%*s %s\n' "$i" "$sicon" "$aicon" "$agent" "$where" "$pad" "" "$title"
+  printf '%3d  %s  %s %-6s  %s%*s %s%s\n' "$i" "$sicon" "$aicon" "$agent" "$where" "$pad" "" "$title" "$mk"
 done <<<"$rows"
 
 [[ "${1:-}" == "--list" || $i -eq 0 ]] && exit 0
 
 echo
-read -r -p "🐕 number to jump to (Enter to close): " pick || exit 0
+read -r -p "🐕 number to jump · s<number> to stop · Enter to close: " pick || exit 0
+# s<n> stops that agent. This is the human pressing the key in the popup — the
+# allowed way to stop an agent; `pasture agent stop` is human-gated (--yes), and
+# an agent must never invoke it on another. Default escalates graceful→forced.
+if [[ "$pick" =~ ^[Ss]([0-9]+)$ ]]; then
+  idx="${BASH_REMATCH[1]}"
+  (( idx >= 1 && idx <= i )) || exit 0
+  p="${panes[$((idx - 1))]}"
+  pasture agent stop "$p" || true          # prints the plan (exits 3, no --yes)
+  read -r -p "🛑 stop $p? [y/N] " ok || exit 0
+  [[ "$ok" == [yY]* ]] || exit 0
+  pasture agent stop "$p" --yes
+  read -r -p "Enter to close " _ || true
+  exit 0
+fi
 [[ "$pick" =~ ^[0-9]+$ ]] && (( pick >= 1 && pick <= i )) || exit 0
 herdr agent focus "${panes[$((pick - 1))]}" >/dev/null

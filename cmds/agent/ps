@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# summary: What each agent is really running — process tree, open servers, outbound — before you stop it
+# usage:   pasture agent ps <pane|--all> [--json]
+# safety:  read
+#
+# A pre-stop recon snapshot. herdr's idle/done tells you the AGENT settled, not
+# whether it left a server or build running. This joins four layers:
+#   herdr agent  → status, worktree (cwd), branch
+#   pane procs   → the agent root pid + its MCP children (herdr foreground group)
+#   OS tree      → every descendant (pgrep), so a backgrounded dev server shows
+#   lsof         → TCP ports it LISTENs on, and who it talks to (outbound)
+# ⚠ marks a settled agent (idle/done) still holding a LISTEN port or burning CPU
+# in a child — the "sleeping sheep left something running" case. Read-only.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need herdr jq
+
+all=false json=false target=""
+while (( $# )); do
+  case "$1" in
+    --all)  all=true; shift ;;
+    --json) json=true; shift ;;
+    -*)     usage "pasture agent ps <pane|--all> [--json]" ;;
+    *)      target="$1"; shift ;;
+  esac
+done
+$all || [[ -n "$target" ]] || usage "pasture agent ps <pane|--all> [--json]"
+
+agents=$(herdr agent list 2>/dev/null) || die "could not reach herdr"
+# pane \t agent \t status \t cwd \t workspace_id \t focused
+rows=$(jq -r '.result.agents[]? | [.pane_id,.agent,.agent_status,(.cwd//""),(.workspace_id//""),(.focused//false)]|@tsv' <<<"$agents")
+if ! $all; then
+  rows=$(awk -F'\t' -v t="$target" '$1==t' <<<"$rows")
+  [[ -n "$rows" ]] || die "no agent at pane '$target' (herdr agent list; or use --all)"
+fi
+[[ -n "$rows" ]] || { $json && echo '[]' || echo "no agents"; exit 0; }
+
+wsmap=$(herdr workspace list 2>/dev/null | jq -r '.result.workspaces[]? | [.workspace_id,(.label//.workspace_id)]|@tsv' 2>/dev/null || true)
+wslabel() { awk -F'\t' -v id="$1" '$1==id{print $2; found=1} END{if(!found)print id}' <<<"$wsmap"; }
+
+# --- gather per-agent pidsets, then one lsof + one ps over the union ---------
+# One process-tree snapshot (pid ppid) for everyone, so a subtree is an awk walk
+# over it — not a recursive pgrep per pid (which cost ~3s across the whole flock).
+tmp=$(mktemp); trap 'rm -f "$tmp" "$tmp.rec"' EXIT
+pstree=$(ps -axo pid=,ppid= 2>/dev/null)
+# All pids under $1, iteratively (no recursion depth limit), from $pstree.
+subtree() {
+  awk -v root="$1" '
+    { ch[$2] = ch[$2] " " $1 }
+    END { stack[1]=root; top=1
+      while(top>0){ p=stack[top--]; print p
+        n=split(ch[p], a, " "); for(i=1;i<=n;i++) if(a[i]!="") stack[++top]=a[i] } }' <<<"$pstree"
+}
+allpids=""
+while IFS=$'\t' read -r pane agent status cwd ws _focused; do
+  [[ -n "$pane" ]] || continue
+  # root = the foreground process whose argv0 is the agent (claude/codex/grok/agy)
+  root=$(herdr pane process-info --pane "$pane" 2>/dev/null \
+    | jq -r --arg a "$agent" '.result.process_info.foreground_processes[]?|select(.argv0==$a)|.pid' 2>/dev/null | head -1)
+  if [[ -n "$root" ]]; then pids=$(subtree "$root" | tr '\n' ' '); else pids=""; fi
+  branch=""
+  [[ -n "$cwd" ]] && branch=$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$pane" "$agent" "$status" "$cwd" "$ws" "$branch" "$root" "$pids" >>"$tmp"
+  allpids+=" $pids"
+done <<<"$rows"
+
+allpids=$(tr ' ' '\n' <<<"$allpids" | awk '/^[0-9]+$/' | sort -un | tr '\n' ',' | sed 's/,$//')
+# pid -> "%cpu etime comm"
+psinfo=""
+[[ -n "$allpids" ]] && psinfo=$(ps -o pid=,pcpu=,etime=,comm= -p "$allpids" 2>/dev/null || true)
+# pid -> LISTEN ports / ESTABLISHED remotes (one lsof over the union)
+sockinfo=""
+# -F machine format: one field per line (p<pid>, n<name>, TST=<state>), so no
+# fragile column counting — a proc whose COMMAND has spaces/version can't shift
+# the parse. LISTEN → local side; ESTABLISHED → remote (after the "->").
+[[ -n "$allpids" ]] && sockinfo=$(lsof -nP -iTCP -a -p "$allpids" -FpnT 2>/dev/null \
+  | awk '
+    /^p/{pid=substr($0,2)}
+    /^f/{name=""}                       # new file: forget the last name...
+    /^n/{name=substr($0,2)}             # ...so a nameless TST cannot reuse it
+    /^TST=/{st=substr($0,5)
+      if(name==""){next}
+      if(st=="LISTEN"){split(name,a,"->"); print pid"\tL\t"a[1]}
+      else if(st=="ESTABLISHED"){split(name,a,"->"); print pid"\tE\t"a[2]}}' || true)
+
+sicon() { case "$1" in blocked) echo ⛔;; "done") echo ✅;; working) echo 🏃;; idle) echo 💤;; *) echo ❔;; esac; }
+
+# --- build one record per agent (JSON-ready), compute the ⚠ flag ------------
+# Per agent: one awk over ps (root cpu/uptime, deduped basenames, a hot child),
+# one awk over the sockets (deduped LISTEN locals + ESTABLISHED remotes), one
+# jq. Fields are joined with 0x1F (\037) so an empty one keeps its slot through
+# `read`. Records accumulate as compact JSON lines and are slurped+sorted once —
+# no O(n²) array rebuild, no per-pid shell call. US = unit separator.
+while IFS=$'\t' read -r pane agent status cwd ws branch root pids; do
+  [[ -n "$pane" ]] || continue
+  pinfo=$(awk -v pids=" $pids " -v root="$root" '
+    BEGIN{n=split(pids,a," "); for(i=1;i<=n;i++) if(a[i]!="") want[a[i]]=1}
+    $1 in want {
+      nm=$4; sub(/.*\//,"",nm)
+      if(nm!="" && !(seen[nm]++)) names=names (names==""?"":" ") nm
+      if($1==root){rcpu=$2; rup=$3} else if($2+0>30) hot=1
+    }
+    END{print rcpu "\037" rup "\037" (hot?"true":"false") "\037" names}' <<<"$psinfo")
+  IFS=$'\037' read -r rcpu rup bg_hot names <<<"$pinfo"
+  sinfo=$(awk -F'\t' -v pids=" $pids " '
+    BEGIN{n=split(pids,a," "); for(i=1;i<=n;i++) if(a[i]!="") want[a[i]]=1}
+    $1 in want && $2=="L" && !(ls[$3]++){L=L (L==""?"":" ") $3}
+    $1 in want && $2=="E" && !(es[$3]++){E=E (E==""?"":" ") $3}
+    END{print L "\037" E}' <<<"$sockinfo")
+  IFS=$'\037' read -r listen out <<<"$sinfo"
+
+  warn=false
+  if [[ "$status" == idle || "$status" == "done" ]] && { [[ -n "$listen" ]] || [[ "$bg_hot" == true ]]; }; then warn=true; fi
+
+  # One US-delimited line per agent; a single jq below turns them all into
+  # JSON (31 jq spawns → 1). No field holds \037 or a newline.
+  printf '%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n' \
+    "$pane" "$agent" "$status" "${cwd##*/}" "$branch" "$(wslabel "$ws")" \
+    "$root" "$rcpu" "$rup" "$names" "$listen" "$out" "$warn" >>"$tmp.rec"
+done <"$tmp"
+
+# Build every record in one jq, then sort: warn first, then blocked→done→working→idle.
+records=$(jq -Rn '
+  [ inputs | split("\u001f") |
+    { pane:.[0],agent:.[1],status:.[2],repo:.[3],branch:.[4],workspace:.[5],
+      pid:(.[6]|tonumber?),cpu:.[7],uptime:.[8],
+      procs:(.[9]|split(" ")|map(select(length>0))),
+      listen:(.[10]|split(" ")|map(select(length>0))),
+      outbound:(.[11]|split(" ")|map(select(length>0))),
+      warn:(.[12]=="true") } ]
+  | sort_by([(if .warn then 0 else 1 end),
+     ({"blocked":0,"done":1,"working":2,"idle":3}[.status]//4), .repo])' "$tmp.rec" 2>/dev/null || echo '[]')
+[[ -n "$records" ]] || records='[]'
+
+if $json; then echo "$records"; exit 0; fi
+
+n=$(jq length <<<"$records")
+w=$(jq '[.[]|select(.warn)]|length' <<<"$records")
+echo "🐕 $n agent(s)$( (( w>0 )) && printf ' · \342\232\240 %s holding a server/background job' "$w")"
+echo
+y=$'\033[33m'; r=$'\033[0m'
+# Delimit with ASCII Unit Separator (0x1F), not tab: tab is an IFS whitespace
+# char, so bash `read` collapses the two tabs around an empty field (listen)
+# and the next field (outbound) slides into it. 0x1F is non-whitespace → every
+# field, empty or not, keeps its slot.
+jq -r '.[] | [.status,.pane,.agent,.repo,.branch,(.pid|tostring),.cpu,.uptime,(.warn|tostring),
+              (.procs|join(" · ")),(.listen|join(" ")),(.outbound|join(" "))]|join("\u001f")' <<<"$records" \
+| while IFS=$'\037' read -r status pane agent repo branch pid cpu up warn procs listen out; do
+    br=""; [[ -n "$branch" ]] && br=" ($branch)"
+    flag=""; [[ "$warn" == true ]] && flag=" ${y}⚠${r}"
+    printf '%s %-6s %-6s %s%s%s  pid %s  cpu %s%%  up %s\n' \
+      "$(sicon "$status")" "$pane" "$agent" "$repo" "$br" "$flag" "${pid:-?}" "${cpu:-?}" "${up:-?}"
+    [[ -n "$procs" ]] && printf '     proc: %s\n' "$procs"
+    [[ -n "$listen" ]] && printf "     ${y}⚠ LISTEN${r} %s\n" "$listen"
+    if [[ -n "$out" ]]; then
+      # shellcheck disable=SC2086  # split the space-separated host list
+      set -- $out
+      shown="$*"; extra=""
+      (( $# > 3 )) && { shown="$1 $2 $3"; extra=" (+$(( $# - 3 )))"; }
+      printf '     ↗ out: %s%s\n' "$shown" "$extra"
+    fi
+  done
