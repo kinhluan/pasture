@@ -17,6 +17,18 @@ you, and get there in one key. pasture is a dotfiles repo that wires
 setup, plus a few small scripts and a 🐕 border collie that watches the agents
 (the sheep) for you.
 
+Ghostty is the terminal app. herdr runs inside it: a terminal multiplexer, like
+tmux, that knows about coding agents. A herdr **workspace** holds **tabs**, a
+tab holds **panes**, and each agent runs in a pane. herdr can tell which agents
+are working, done or waiting for you. Sessions keep running when you detach.
+
+| Agent | Maker | CLI |
+|---|---|---|
+| Claude Code | Anthropic | `claude` |
+| Codex | OpenAI | `codex` |
+| Grok Build | xAI | `grok` |
+| Antigravity (CLI; the IDE is a separate app) | Google | `agy` |
+
 ## ✨ What you get
 
 - **🧭 One layout per repo.** `pasture-layout` turns a herdr tab into shell,
@@ -59,8 +71,10 @@ You need macOS and [Homebrew](https://brew.sh). herdr and the agent CLIs are not
 in the Brewfile because they ship their own self-updating installers:
 
 ```bash
+brew install --cask ghostty                    # the terminal, if you don't have it
 curl -fsSL https://herdr.dev/install.sh | sh   # read it first, see Trust below
-# plus whichever agents you use: claude, codex, grok, agy
+# plus whichever agents you use (table above), each from its maker's installer;
+# pasture-update keeps them current afterwards (agents.conf)
 ```
 
 Then clone pasture anywhere and run the setup:
@@ -75,8 +89,10 @@ cd pasture
 The links point back into the clone, so keep it where it is (if you move it,
 run `./setup.sh` again). `setup.sh` does, in order:
 
-1. `brew bundle` with the [Brewfile](Brewfile), and `starpls` (the Bazel
-   language server) from its GitHub release, checksum-verified.
+1. `brew bundle` with the [Brewfile](Brewfile); `starpls` (the Bazel
+   language server) from its GitHub release, checksum-verified; the newest
+   Node LTS through fnm when there is none (the skills step below needs it);
+   and rust-analyzer when rustup is installed.
 2. Moves any existing config that would be replaced to
    `~/.pasture-backup/<timestamp>/` (owner-only). Nothing is overwritten.
 3. Links every package under `home/` into `$HOME` with GNU Stow.
@@ -93,7 +109,9 @@ Once per machine:
 
 1. Add `source ~/.config/pasture/pasture.zsh` at the **end** of `~/.zshrc`
    (see [Shell](#-shell)).
-2. Log in: `gh auth login` and `glab auth login --hostname <your gitlab host>`.
+2. Log in to the forges you use: `gh auth login` for GitHub, and
+   `glab auth login --hostname <your gitlab host>` only if you use the
+   `pasture mr …` commands, which are GitLab-only.
 3. Allow notifications for **Ghostty** in System Settings › Notifications.
 4. Restart Ghostty, run `herdr`, then `pasture-layout` inside a repo.
 
@@ -172,28 +190,34 @@ The agents are the sheep; the collie watches them so you don't have to.
   you in the sidebar, and removes it when the agent moves on or you focus it.
 - **Herd.** `⌃⌥S` opens the board, most urgent first: ⛔ waiting, ✅ done,
   🏃 working, 💤 idle. Type a number to jump.
-- **Send home.** `⌃⌥X` quits every idle agent after one y/N, using each agent's
-  own quit command so its session can be resumed. It skips agents with an unread
-  answer, the focused one and named ones (pasture-duo reviewers). Their tabs
+- **Send home.** `⌃⌥X` runs `pasture agent sweep` in a popup: it quits every
+  idle agent after one y/N, typing each agent's own quit command (`/exit`,
+  `/quit`) so its session can be resumed. It skips agents with an unread
+  answer (✅ done), the focused one and named ones (agents started with a
+  name, as `pasture-duo` starts its reviewers). Their tabs
   close too, unless another pane there still runs something (hx, a dev server,
   a build): those stay and are named. Answer `F` to also force-stop the ones
   that ignore their quit; `pasture agent sweep --tidy` closes idle tabs left
   from earlier.
   Idle agents hold memory — a few dozen push a 16GB Mac into swap — so this is
-  the cheap fix; each one is written to a ledger, and
+  the cheap fix; each one is written to a ledger
+  (`~/.cache/pasture/swept.tsv`), and
   `pasture agent sweep --recall` prints the `cd … && claude --continue` (or
   codex/grok) line to call one back. Headless: `pasture agent sweep --yes`.
 
-The collie only reads, tags and points: **it never answers an agent's prompts
-or approvals for you.** A click can't jump straight to the pane because the only
+The collie reads, tags and points, and stops or quits an agent only when you
+press the key and answer y: **it never answers an agent's prompts or approvals
+for you.** A click can't jump straight to the pane because the only
 notifier that runs a command on click, Homebrew's `terminal-notifier`, is
 ad-hoc signed and macOS won't let it post notifications.
 
 ## 👯 Writer and reviewers
 
 Run `pasture-duo` at the root of a repo inside herdr. The pane you are in
-becomes the writer; reviewers start beside it, each read-only and named, so the
-writer can reach them with `herdr agent prompt`. A review-loop prompt is copied
+becomes the writer; reviewers start beside it, each named, so the writer can
+reach them with `herdr agent prompt`. They are meant to be read-only: Codex is
+held to it by its OS sandbox; Claude, Grok and Antigravity start in plan mode,
+which asks you before any edit (see [Trust](#-trust)). A review-loop prompt is copied
 to your clipboard: paste it into the writer and replace `<TASK>`.
 
 The prompt tells the writer to ask every reviewer at once, wait for all of them,
