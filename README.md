@@ -202,6 +202,47 @@ broken-build finding is fixed even if only one reviewer raised it; otherwise the
 majority decides; a tie goes to you. Reviewers only talk to the writer, never
 to each other. `PASTURE_DUO_ROUNDS` caps the rounds (default 2).
 
+### 🐠 Fresh eyes on a doc
+
+`pasture-duo` reviews code with agents that sit beside the writer. A design doc
+needs a different reader: one with no history. `pasture doc review <file>`
+starts every reviewer as a **new headless agent**. Each gets only the doc's path
+and a persona brief, so it has no context **because of how it starts**, not
+because it was told to ignore what it saw. It runs one per vendor, so their
+blind spots differ:
+
+```sh
+pasture doc review docs/design.md --yes              # 4 personas × allowed vendors
+pasture doc review README.md --personas naive-reader --vendors claude,grok --yes
+```
+
+Personas (`cmds/doc/personas/`): **zoom-out** (is this the simplest thing, does
+the code already have it), **naive-reader** (reads only the doc: where does a
+newcomer get lost), **critic** (failure modes, security, claims the code
+contradicts), **readiness** (what is still undecided before anyone can build it).
+They are inspired by the [Elephant-Goldfish Model](https://egm.dev).
+
+No reviewer can change anything. Claude starts in an empty directory without
+your settings, hooks, plugins, MCP servers or auto-memory, and has only
+Read/Grep/Glob (the account email from your login is still in its context).
+Codex runs in its OS read-only sandbox. Grok runs in plan mode, where the app
+refuses writes but the OS does not, so it only ever gets a copy.
+
+**The doc, and anything a reviewer reads, goes to every vendor used.** What
+they read decides who may see it:
+
+| The doc is… | Reviewers read | Vendors |
+|---|---|---|
+| in a public repo, pushed unchanged | a `git archive` snapshot of origin's default branch: only what is already public | Claude, Codex, Grok |
+| in any other repo, or not yet pushed | your working tree | `$PASTURE_PRIVATE_REVIEW_VENDORS` (default `claude`) |
+| not in a git repo | a copy of the doc alone, never the folder around it | the same |
+
+Widen `PASTURE_PRIVATE_REVIEW_VENDORS` only as your employer's rules allow.
+Asking for a vendor the policy refuses exits 3. Like every `external` command,
+it prints its plan and needs `--yes`. Findings come back sorted
+⛔ blocker → 🔶 major → minor. The raw answers stay in
+`~/.cache/pasture/reviews/`.
+
 ## 🧰 The pasture command library
 
 Agents tend to write a fresh shell script whenever they need to drive a CLI,
@@ -218,6 +259,7 @@ pasture list --json                  # the same, for agents
 | `pasture pane tail <pane> [--wait REGEX]` | read | another pane's recent output, or wait until a pattern appears |
 | `pasture web read <url>` | read | a page as text: plain fetch first, agent-browser when that comes back empty or walled |
 | `pasture mr stack <search>` | read | open GitLab MRs as a stack: which branch sits on which, each MR's own vs visible diff, CI |
+| `pasture doc review <file>` | external | fresh-eyes review: each persona × vendor a new read-only headless agent, findings by severity |
 | `pasture agent ask <name> "<prompt>"` | write | prompt another agent, wait, print its answer; refuses when it is blocked on the user |
 | `pasture mr fanout <branch>…` | external | move stacked branches onto the default branch (trunk-based), in a temporary worktree, force-push with lease |
 | `pasture stack push <prefix> [--mr]` | external | push each commit of a Sapling stack to its own branch, optionally as a chain of MRs |
