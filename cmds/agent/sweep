@@ -200,22 +200,35 @@ if ! $yes; then
   exit 3
 fi
 
-# 1. ledger first, so a crash mid-sweep still knows who left.
+# 1+2. For each agent, just before its quit: is it still the same idle,
+# unfocused agent? The plan was read earlier — one may have started working,
+# hit an approval, or got focused (you typing in it) since. Those are left
+# alone. The rest go to the ledger first, so a crash mid-sweep still knows who
+# left, then get their quit. They then leave herdr's list in parallel.
+still_idle() { # $1 = pane, $2 = agent
+  herdr agent get "$1" 2>/dev/null | jq -e --arg a "$2" \
+    '.result.agent | select(.agent == $a and .agent_status == "idle" and .focused != true)' >/dev/null
+}
 mkdir -p "$(dirname "$ledger")"
 now=$(date '+%Y-%m-%d %H:%M')
-while IFS=$'\t' read -r pane agent cwd title _; do
-  printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$pane" "$agent" "$cwd" "$title" >>"$ledger"
-done <<<"$sleepers"
-
-# 2. everyone's quit at once, then wait for them to leave herdr's list.
-while IFS=$'\t' read -r pane agent _ _ _; do
+sent=""
+while IFS=$'\t' read -r pane agent cwd title tab; do
   case "$agent" in
     claude|codex) quit=/exit ;;
     grok|agy)     quit=/quit ;;
     *)            continue ;;
   esac
+  if ! still_idle "$pane" "$agent"; then
+    echo "  ↩  $pane $agent is no longer idle — left alone"; continue
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$pane" "$agent" "$cwd" "$title" >>"$ledger"
   herdr agent prompt "$pane" "$quit" >/dev/null 2>&1 || true
+  sent+="$pane"$'\t'"$agent"$'\t'"$cwd"$'\t'"$title"$'\t'"$tab"$'\n'
 done <<<"$sleepers"
+# From here on, only the ones actually sent home count.
+sleepers="${sent%$'\n'}"
+n=$(awk 'NF{c++} END{print c+0}' <<<"$sleepers")
+if (( n == 0 )); then echo "💤 none left idle by the time of the sweep"; exit 0; fi
 
 left() { # survivors, as "pane<TAB>agent" lines
   local now_list
