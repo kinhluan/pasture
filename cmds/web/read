@@ -9,9 +9,10 @@
 # cut at --max-chars (default 20000). The first line says which way was used.
 #
 # This is a `read` command agents run freely, so the browser it falls back to
-# is never your logged-in one: an isolated agent-browser session, with any
-# AGENT_BROWSER_PROFILE in the environment removed. Pages that need your login
-# are for `agent-browser --profile …` directly, which you choose to run.
+# is never your logged-in one: a fresh agent-browser session per call, closed
+# afterwards, with every AGENT_BROWSER_* variable (profile, args, extensions,
+# executable…) removed from its environment. Pages that need your login are
+# for `agent-browser --profile …` directly, which you choose to run.
 set -euo pipefail
 . "$PASTURE_DIR/cmds/lib.sh"
 need curl
@@ -44,5 +45,12 @@ if ! $browser; then
 fi
 
 need agent-browser
-text=$(env -u AGENT_BROWSER_PROFILE agent-browser --session pasture-web-read read "$url" 2>/dev/null) || { echo "pasture: neither fetch nor agent-browser could read $url" >&2; exit 1; }
+clean=(env)
+while IFS= read -r v; do [[ -n "$v" ]] && clean+=(-u "$v"); done \
+  < <(env | sed -n 's/^\(AGENT_BROWSER_[A-Za-z0-9_]*\)=.*/\1/p')
+session="pasture-web-read-$$-$RANDOM"
+rc=0
+text=$("${clean[@]}" agent-browser --session "$session" read "$url" 2>/dev/null) || rc=$?
+"${clean[@]}" agent-browser --session "$session" close >/dev/null 2>&1 || true
+(( rc == 0 )) || { echo "pasture: neither fetch nor agent-browser could read $url" >&2; exit 1; }
 emit browser "$text"
