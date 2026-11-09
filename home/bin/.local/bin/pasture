@@ -49,6 +49,9 @@ all_cmds() {
 
 find_cmd() {
   local root
+  # Group and command are single names, never paths: `pasture .. ../x` must
+  # not reach an executable outside the two roots (agents run pasture freely).
+  [[ "$1" =~ ^[a-z0-9][a-z0-9_-]*$ && "$2" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || return 1
   for root in "${ROOTS[@]}"; do
     [[ -f "$root/$1/$2" && -x "$root/$1/$2" ]] && { echo "$root/$1/$2"; return 0; }
   done
