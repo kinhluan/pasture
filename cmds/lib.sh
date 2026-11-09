@@ -106,7 +106,9 @@ with_timeout() {
       local $SIG{ALRM} = sub { kill "TERM", $pid; sleep 1; kill "KILL", $pid; };
       alarm $s;
       waitpid($pid, 0);
-      exit($? >> 8);
+      # Killed by a signal (our alarm, or anything else): exit 124 like
+      # coreutils timeout. A plain $? >> 8 would read as success.
+      exit(($? & 127) ? 124 : ($? >> 8));
     ' "$secs" "$@"
     return
   fi
