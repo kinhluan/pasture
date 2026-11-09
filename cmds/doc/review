@@ -114,7 +114,11 @@ done
 have_personas() { local f n; for f in "$pdir"/*.md; do n=$(basename "$f" .md); [[ "$n" == README ]] || printf '%s ' "$n"; done; }
 [[ -n "$personas" ]] || personas=$(have_personas)
 personas=$(printf '%s' "$personas" | tr ',' ' ')
-for p in $personas; do [[ -f "$pdir/$p.md" ]] || die "no persona '$p' (have: $(have_personas))"; done
+for p in $personas; do
+  # A persona is a name, never a path: its file becomes the prompt that is sent
+  # to every vendor, so `--personas ../../notes/x` would ship any .md off-box.
+  [[ "$p" =~ ^[a-z0-9][a-z0-9_-]*$ && -f "$pdir/$p.md" ]] || die "no persona '$p' (have: $(have_personas))"
+done
 
 n=0; for _ in $personas; do for _ in $vendors; do n=$((n+1)); done; done
 echo "pasture: review $rel  ($vis)"
