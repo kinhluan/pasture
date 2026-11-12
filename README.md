@@ -260,7 +260,9 @@ pasture sec pentest ./services/api http://localhost:8080 --yes
 - **Who sees it.** Code that is already public (a public repo, clean, HEAD on
   origin) may go to any model. Anything else, and any running app, only to a
   provider in `PASTURE_PRIVATE_PENTEST_PROVIDERS` (default `anthropic`) or a
-  local model (`ollama`, `lm_studio`, or `LLM_API_BASE` on loopback).
+  local model (`ollama`, `lm_studio`, or `LLM_API_BASE` on loopback). An
+  endpoint set anywhere (`*_API_BASE` / `*_BASE_URL` in the environment or in
+  Strix's saved config) counts: `anthropic/…` through a proxy is that proxy.
 - **How much.** `--mode quick|standard|deep` (default quick), `--budget USD`
   (default 5). Exit 0 no findings, 1 findings or a failed run; the report stays
   in the run directory (`strix view` there opens it).
