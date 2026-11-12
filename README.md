@@ -221,6 +221,7 @@ pasture list --json                  # the same, for agents
 | `pasture agent ask <name> "<prompt>"` | write | prompt another agent, wait, print its answer; refuses when it is blocked on the user |
 | `pasture mr fanout <branch>…` | external | move stacked branches onto the default branch (trunk-based), in a temporary worktree, force-push with lease |
 | `pasture stack push <prefix> [--mr]` | external | push each commit of a Sapling stack to its own branch, optionally as a chain of MRs |
+| `pasture sec pentest <dir\|url>…` | external | 🛡 Strix AI pentest of your own code or local app, on a copy, with a model the target's privacy allows |
 
 **Safety levels.** `read` only reads. `write` changes local state and has
 `--dry-run`. `external` touches other systems: it prints its plan and exits 3
@@ -233,6 +234,38 @@ the shared helpers. Commands of your own go in
 `~/.config/pasture/cmds.local/<group>/<command>`, which is never committed and
 wins over a built-in of the same name. Only these two places are read: a
 repository you open cannot add commands.
+
+## 🛡 Pentesting your own app
+
+[Strix](https://github.com/usestrix/strix) runs a team of AI agents in a Docker
+sandbox that read your code, run it and try real exploits, then report what
+they could prove. It attacks what you point it at and sends what it sees to an
+LLM, so pasture runs it through `pasture sec pentest`, which decides first:
+
+```bash
+uv tool install strix-agent                       # once; pasture-update keeps it current
+export STRIX_LLM=anthropic/<model> LLM_API_KEY=…  # or a local model
+pasture sec pentest ./services/api http://localhost:8080   # the plan
+pasture sec pentest ./services/api http://localhost:8080 --yes
+```
+
+- **Targets.** Code (a directory inside a git repo, or a file) goes in as a
+  copy in `~/.cache/pasture/pentest/<run>`, because Strix mounts targets
+  writable. The copy holds what git tracks plus untracked files that are not
+  ignored, so ignored `.env` files stay out, and has no symlinks. A URL must be
+  loopback (`localhost`, `127.x`, `::1`, `host.docker.internal`) or a host
+  listed in `~/.config/pasture/pentest-scope`. **List a host only when you own
+  it or have written permission to test it**: Strix attacks it for real. That
+  file is yours to write, never an agent's. Git URLs are refused; clone first.
+- **Who sees it.** Code that is already public (a public repo, clean, HEAD on
+  origin) may go to any model. Anything else, and any running app, only to a
+  provider in `PASTURE_PRIVATE_PENTEST_PROVIDERS` (default `anthropic`) or a
+  local model (`ollama`, `lm_studio`, or `LLM_API_BASE` on loopback).
+- **How much.** `--mode quick|standard|deep` (default quick), `--budget USD`
+  (default 5). Exit 0 no findings, 1 findings or a failed run; the report stays
+  in the run directory (`strix view` there opens it).
+- **Not used:** `strix cloud` (uploads your code to strix.ai) and Strix's own
+  skill pack, which would let an agent start a pentest without this check.
 
 ## 🌱 One task, one worktree
 
@@ -515,7 +548,7 @@ herdr config check
 [herdr](https://herdr.dev) · [Ghostty](https://ghostty.org) ·
 [Helix](https://helix-editor.com) · [lazygit](https://github.com/jesseduffield/lazygit) ·
 [starship](https://starship.rs) · [Worktrunk](https://worktrunk.dev) ·
-[Sapling](https://sapling-scm.com) · [agent-browser](https://agent-browser.dev) ·
+[Sapling](https://sapling-scm.com) · [Strix](https://github.com/usestrix/strix) · [agent-browser](https://agent-browser.dev) ·
 [agent-desktop](https://github.com/vercel-labs/agent-desktop) · [GNU Stow](https://www.gnu.org/software/stow/)
 
 ## 📄 License
