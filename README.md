@@ -217,6 +217,7 @@ pasture list --json                  # the same, for agents
 | ------- | ------ | ---- |
 | `pasture pane tail <pane> [--wait REGEX]` | read | another pane's recent output, or wait until a pattern appears |
 | `pasture web read <url>` | read | a page as text: plain fetch first, agent-browser when that comes back empty or walled |
+| `pasture repo who [dir] [--check]` | read | the worktrees of this repo, each with its branch, uncommitted files and the agents in it; `--check` exits 3 when another agent is in yours |
 | `pasture mr stack <search>` | read | open GitLab MRs as a stack: which branch sits on which, each MR's own vs visible diff, CI |
 | `pasture agent ask <name> "<prompt>"` | write | prompt another agent, wait, print its answer; refuses when it is blocked on the user |
 | `pasture mr fanout <branch>…` | external | move stacked branches onto the default branch (trunk-based), in a temporary worktree, force-push with lease |
@@ -253,6 +254,21 @@ Worktrees go to `.worktrees/<branch>` inside the repo
 clean, and warns when a Bazel repo lacks it in `.bazelignore`. The herdr
 workspace is named after the branch, so the sidebar and the collie's board
 show which task each agent is on.
+
+Before an agent starts editing a repo, `pasture repo who` shows who is
+already there:
+
+```
+🌿 . (master)  ✎ 15 uncommitted
+     💤 wV:p1  claude pull the latest code
+🌿 .worktrees/feature-login (feature-login) ← here
+     (no agent)
+```
+
+git refuses to check out one branch in two worktrees, but nothing stops a
+second agent from working in a worktree another agent is already editing.
+`pasture repo who --check` exits 3 when an agent other than this pane is in the
+same worktree; the agent should make its own (`pasture-task <branch>`) instead.
 
 `wt switch <branch>` jumps between worktrees in the shell (pasture.zsh loads its
 shell integration). `wt merge` merges locally into the default branch; where
