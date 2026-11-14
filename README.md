@@ -17,6 +17,18 @@ you, and get there in one key. pasture is a dotfiles repo that wires
 setup, plus a few small scripts and a 🐕 border collie that watches the agents
 (the sheep) for you.
 
+Ghostty is the terminal app. herdr runs inside it: a terminal multiplexer, like
+tmux, that knows about coding agents. A herdr **workspace** holds **tabs**, a
+tab holds **panes**, and each agent runs in a pane. herdr can tell which agents
+are working, done or waiting for you. Sessions keep running when you detach.
+
+| Agent | Maker | CLI |
+|---|---|---|
+| Claude Code | Anthropic | `claude` |
+| Codex | OpenAI | `codex` |
+| Grok Build | xAI | `grok` |
+| Antigravity (CLI; the IDE is a separate app) | Google | `agy` |
+
 ## ✨ What you get
 
 - **🧭 One layout per repo.** `pasture-layout` turns a herdr tab into shell,
@@ -59,8 +71,10 @@ You need macOS and [Homebrew](https://brew.sh). herdr and the agent CLIs are not
 in the Brewfile because they ship their own self-updating installers:
 
 ```bash
+brew install --cask ghostty                    # the terminal, if you don't have it
 curl -fsSL https://herdr.dev/install.sh | sh   # read it first, see Trust below
-# plus whichever agents you use: claude, codex, grok, agy
+# plus whichever agents you use (table above), each from its maker's installer;
+# pasture-update keeps them current afterwards (agents.conf)
 ```
 
 Then clone pasture anywhere and run the setup:
@@ -75,8 +89,10 @@ cd pasture
 The links point back into the clone, so keep it where it is (if you move it,
 run `./setup.sh` again). `setup.sh` does, in order:
 
-1. `brew bundle` with the [Brewfile](Brewfile), and `starpls` (the Bazel
-   language server) from its GitHub release, checksum-verified.
+1. `brew bundle` with the [Brewfile](Brewfile); `starpls` (the Bazel
+   language server) from its GitHub release, checksum-verified; the newest
+   Node LTS through fnm when there is none (the skills step below needs it);
+   and rust-analyzer when rustup is installed.
 2. Moves any existing config that would be replaced to
    `~/.pasture-backup/<timestamp>/` (owner-only). Nothing is overwritten.
 3. Links every package under `home/` into `$HOME` with GNU Stow.
@@ -93,7 +109,9 @@ Once per machine:
 
 1. Add `source ~/.config/pasture/pasture.zsh` at the **end** of `~/.zshrc`
    (see [Shell](#-shell)).
-2. Log in: `gh auth login` and `glab auth login --hostname <your gitlab host>`.
+2. Log in to the forges you use: `gh auth login` for GitHub, and
+   `glab auth login --hostname <your gitlab host>` only if you use the
+   `pasture mr …` commands, which are GitLab-only.
 3. Allow notifications for **Ghostty** in System Settings › Notifications.
 4. Restart Ghostty, run `herdr`, then `pasture-layout` inside a repo.
 
@@ -172,28 +190,34 @@ The agents are the sheep; the collie watches them so you don't have to.
   you in the sidebar, and removes it when the agent moves on or you focus it.
 - **Herd.** `⌃⌥S` opens the board, most urgent first: ⛔ waiting, ✅ done,
   🏃 working, 💤 idle. Type a number to jump.
-- **Send home.** `⌃⌥X` quits every idle agent after one y/N, using each agent's
-  own quit command so its session can be resumed. It skips agents with an unread
-  answer, the focused one and named ones (pasture-duo reviewers). Their tabs
+- **Send home.** `⌃⌥X` runs `pasture agent sweep` in a popup: it quits every
+  idle agent after one y/N, typing each agent's own quit command (`/exit`,
+  `/quit`) so its session can be resumed. It skips agents with an unread
+  answer (✅ done), the focused one and named ones (agents started with a
+  name, as `pasture-duo` starts its reviewers). Their tabs
   close too, unless another pane there still runs something (hx, a dev server,
   a build): those stay and are named. Answer `F` to also force-stop the ones
   that ignore their quit; `pasture agent sweep --tidy` closes idle tabs left
   from earlier.
   Idle agents hold memory — a few dozen push a 16GB Mac into swap — so this is
-  the cheap fix; each one is written to a ledger, and
+  the cheap fix; each one is written to a ledger
+  (`~/.cache/pasture/swept.tsv`), and
   `pasture agent sweep --recall` prints the `cd … && claude --continue` (or
   codex/grok) line to call one back. Headless: `pasture agent sweep --yes`.
 
-The collie only reads, tags and points: **it never answers an agent's prompts
-or approvals for you.** A click can't jump straight to the pane because the only
+The collie reads, tags and points, and stops or quits an agent only when you
+press the key and answer y: **it never answers an agent's prompts or approvals
+for you.** A click can't jump straight to the pane because the only
 notifier that runs a command on click, Homebrew's `terminal-notifier`, is
 ad-hoc signed and macOS won't let it post notifications.
 
 ## 👯 Writer and reviewers
 
 Run `pasture-duo` at the root of a repo inside herdr. The pane you are in
-becomes the writer; reviewers start beside it, each read-only and named, so the
-writer can reach them with `herdr agent prompt`. A review-loop prompt is copied
+becomes the writer; reviewers start beside it, each named, so the writer can
+reach them with `herdr agent prompt`. They are meant to be read-only: Codex is
+held to it by its OS sandbox; Claude, Grok and Antigravity start in plan mode,
+which asks you before any edit (see [Trust](#-trust)). A review-loop prompt is copied
 to your clipboard: paste it into the writer and replace `<TASK>`.
 
 The prompt tells the writer to ask every reviewer at once, wait for all of them,
@@ -201,6 +225,53 @@ merge the findings and settle disagreements: a security, data-loss or
 broken-build finding is fixed even if only one reviewer raised it; otherwise the
 majority decides; a tie goes to you. Reviewers only talk to the writer, never
 to each other. `PASTURE_DUO_ROUNDS` caps the rounds (default 2).
+
+### 🐠 Fresh eyes on a doc
+
+`pasture-duo` reviews code with agents that sit beside the writer. A design doc
+needs a different reader: one with no history. `pasture doc review <file>`
+starts every reviewer as a **new headless agent**. Each gets only the doc's path
+and a persona brief, so it has no context **because of how it starts**, not
+because it was told to ignore what it saw. It runs one per vendor, so their
+blind spots differ:
+
+```sh
+pasture doc review docs/design.md --yes              # 4 personas × allowed vendors
+pasture doc review README.md --personas naive-reader --vendors claude,grok --yes
+```
+
+Personas (`cmds/doc/personas/`): **zoom-out** (is this the simplest thing, does
+the code already have it), **naive-reader** (reads only the doc: where does a
+newcomer get lost), **critic** (failure modes, security, claims the code
+contradicts), **readiness** (what is still undecided before anyone can build it).
+They are inspired by the [Elephant-Goldfish Model](https://egm.dev).
+
+No reviewer can change anything, or read outside what it reviews. Each runs
+under a macOS sandbox (`sandbox-exec`) that refuses reading or writing
+anything in your home folder except reading the tree under review and that
+agent's login file (Codex and Grok also start from an empty home of their own,
+so no transcripts, memory, skills, plugins or MCP servers): a doc that tells a reviewer to open `~/.ssh` gets
+"Operation not permitted". Claude starts in an empty directory without your
+settings, hooks, plugins, MCP servers or auto-memory, and has only
+Read/Grep/Glob (the account email from your login is still in its context).
+Grok runs in plan mode with only its read, list and grep tools. Codex gets no
+tools at all, since its own sandbox cannot run inside another: the doc goes in
+its prompt and it reviews the doc alone, not the code.
+
+**The doc, and anything a reviewer reads, goes to every vendor used.** What
+they read decides who may see it:
+
+| The doc is… | Reviewers read | Vendors |
+|---|---|---|
+| in a public repo, pushed unchanged (checked with origin itself, not a local ref) | a `git archive` snapshot of origin's default branch: only what is already public | Claude, Codex, Grok |
+| in any other repo, or not yet pushed | your working tree | `$PASTURE_PRIVATE_REVIEW_VENDORS` (default `claude`) |
+| not in a git repo | a copy of the doc alone, never the folder around it | the same |
+
+Widen `PASTURE_PRIVATE_REVIEW_VENDORS` only as your employer's rules allow.
+Asking for a vendor the policy refuses exits 3. Like every `external` command,
+it prints its plan and needs `--yes`. Findings come back sorted
+⛔ blocker → 🔶 major → minor. The raw answers stay in
+`~/.cache/pasture/reviews/`.
 
 ## 🧰 The pasture command library
 
@@ -218,6 +289,7 @@ pasture list --json                  # the same, for agents
 | `pasture pane tail <pane> [--wait REGEX]` | read | another pane's recent output, or wait until a pattern appears |
 | `pasture web read <url>` | read | a page as text: plain fetch first, agent-browser when that comes back empty or walled |
 | `pasture mr stack <search>` | read | open GitLab MRs as a stack: which branch sits on which, each MR's own vs visible diff, CI |
+| `pasture doc review <file>` | external | fresh-eyes review: each persona × vendor a new read-only headless agent, findings by severity |
 | `pasture agent ask <name> "<prompt>"` | write | prompt another agent, wait, print its answer; refuses when it is blocked on the user |
 | `pasture mr fanout <branch>…` | external | move stacked branches onto the default branch (trunk-based), in a temporary worktree, force-push with lease |
 | `pasture stack push <prefix> [--mr]` | external | push each commit of a Sapling stack to its own branch, optionally as a chain of MRs |

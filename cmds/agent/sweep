@@ -47,9 +47,15 @@ resume_cmd() { # $1 = agent
 if [[ "${1:-}" == "--recall" ]]; then
   [[ -s "$ledger" ]] || { echo "pasture: nobody swept yet ($ledger)"; exit 0; }
   # Newest sweep first; one line per (agent, directory) — the latest wins.
-  sort -t$'\t' -k1,1r "$ledger" | awk -F'\t' '!seen[$3 FS $4]++' |
-  while IFS=$'\t' read -r when _pane agent cwd title; do
-    printf '%s  %-6s  %s\n      cd %q && %s\n' "$when" "$agent" "${title:0:60}" "$cwd" "$(resume_cmd "$agent")"
+  # The ledger stays tab-separated for people; read it as \037 so an empty
+  # field keeps its slot (tab is IFS whitespace: two tabs would collapse).
+  sort -t$'\t' -k1,1r "$ledger" | awk -F'\t' -v OFS='\037' '!seen[$3 FS $4]++ { $1 = $1; print }' |
+  while IFS=$'\037' read -r when _pane agent cwd title; do
+    if [[ -n "$cwd" ]]; then
+      printf '%s  %-6s  %s\n      cd %q && %s\n' "$when" "$agent" "${title:0:60}" "$cwd" "$(resume_cmd "$agent")"
+    else
+      printf '%s  %-6s  %s\n      (directory unknown) %s\n' "$when" "$agent" "${title:0:60}" "$(resume_cmd "$agent")"
+    fi
   done
   exit 0
 fi
@@ -177,19 +183,21 @@ if $tidy; then
 fi
 
 # --- sweep ---------------------------------------------------------------------
-# pane · agent · cwd · title · tab, with control chars stripped (untrusted).
+# pane · agent · cwd · title · tab, with control chars stripped (untrusted),
+# joined with \037 (not tab: an empty title would make `read` collapse two
+# tabs and slide the tab id into the title).
 sleepers=$(herdr agent list | jq -r --arg me "${HERDR_PANE_ID:-}" --argjson named "$named" '
   .result.agents[]
   | select(.agent_status == "idle" and .focused != true and .pane_id != $me
            and ($named or ((.name // "") == "")))
   | [.pane_id, .agent, (.cwd // ""), (.terminal_title_stripped // ""), (.tab_id // "")]
-  | map(gsub("[[:cntrl:]]"; " ")) | @tsv')
+  | map(gsub("[[:cntrl:]]"; " ")) | join("\u001f")')
 
 if [[ -z "$sleepers" ]]; then echo "💤 no idle agents to send home"; exit 0; fi
 n=$(awk 'END{print NR}' <<<"$sleepers")
 
 echo "pasture: send $n idle agent(s) home  (swap used now: $(swap_used))"
-while IFS=$'\t' read -r pane agent cwd _ _; do
+while IFS=$'\037' read -r pane agent cwd _ _; do
   printf '  %-7s %-7s %s\n' "$pane" "$agent" "${cwd##*/}"
 done <<<"$sleepers"
 if $force; then echo "  plan: quit all, wait ${timeout}s, then force-stop survivors"
@@ -200,27 +208,40 @@ if ! $yes; then
   exit 3
 fi
 
-# 1. ledger first, so a crash mid-sweep still knows who left.
+# 1+2. For each agent, just before its quit: is it still the same idle,
+# unfocused agent? The plan was read earlier — one may have started working,
+# hit an approval, or got focused (you typing in it) since. Those are left
+# alone. The rest go to the ledger first, so a crash mid-sweep still knows who
+# left, then get their quit. They then leave herdr's list in parallel.
+still_idle() { # $1 = pane, $2 = agent
+  herdr agent get "$1" 2>/dev/null | jq -e --arg a "$2" \
+    '.result.agent | select(.agent == $a and .agent_status == "idle" and .focused != true)' >/dev/null
+}
 mkdir -p "$(dirname "$ledger")"
 now=$(date '+%Y-%m-%d %H:%M')
-while IFS=$'\t' read -r pane agent cwd title _; do
-  printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$pane" "$agent" "$cwd" "$title" >>"$ledger"
-done <<<"$sleepers"
-
-# 2. everyone's quit at once, then wait for them to leave herdr's list.
-while IFS=$'\t' read -r pane agent _ _ _; do
+sent=""
+while IFS=$'\037' read -r pane agent cwd title tab; do
   case "$agent" in
     claude|codex) quit=/exit ;;
     grok|agy)     quit=/quit ;;
     *)            continue ;;
   esac
+  if ! still_idle "$pane" "$agent"; then
+    echo "  ↩  $pane $agent is no longer idle — left alone"; continue
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$now" "$pane" "$agent" "$cwd" "$title" >>"$ledger"
   herdr agent prompt "$pane" "$quit" >/dev/null 2>&1 || true
+  sent+="$pane"$'\037'"$agent"$'\037'"$cwd"$'\037'"$title"$'\037'"$tab"$'\n'
 done <<<"$sleepers"
+# From here on, only the ones actually sent home count.
+sleepers="${sent%$'\n'}"
+n=$(awk 'NF{c++} END{print c+0}' <<<"$sleepers")
+if (( n == 0 )); then echo "💤 none left idle by the time of the sweep"; exit 0; fi
 
 left() { # survivors, as "pane<TAB>agent" lines
   local now_list
   now_list=$(herdr agent list | jq -r '.result.agents[] | "\(.pane_id)\t\(.agent)"')
-  while IFS=$'\t' read -r pane agent _ _ _; do
+  while IFS=$'\037' read -r pane agent _ _ _; do
     grep -qxF "$pane	$agent" <<<"$now_list" && printf '%s\t%s\n' "$pane" "$agent"
   done <<<"$sleepers"
   return 0
@@ -249,7 +270,7 @@ fi
 
 # 4. their tabs (a survivor's tab stays: its pane still runs the agent)
 if $close; then
-  tabs=$(cut -f5 <<<"$sleepers" | awk 'NF && !seen[$0]++' | tr '\n' ' ')
+  tabs=$(awk -F'\037' '{print $5}' <<<"$sleepers" | awk 'NF && !seen[$0]++' | tr '\n' ' ')
   [[ -n "$tabs" ]] && tidy_tabs "$tabs" true
 fi
 echo "  call one back: pasture agent sweep --recall"

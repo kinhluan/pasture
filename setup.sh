@@ -28,13 +28,29 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 # would become a symlink and Helix would write grammars/runtime into this repo.
 stow_cmd() { stow --no-folding --dir "$STOW_DIR" --target "$HOME" "$@"; }
 
+MOVED=()   # targets backup() moved aside this run, for restore_backups
 backup() {
   local target="$1"
   # Backups are copies of personal config: keep them owner-only.
   mkdir -p "$HOME/.pasture-backup" && chmod 700 "$HOME/.pasture-backup"
   mkdir -p "$BACKUP_DIR/$(dirname "${target#"$HOME"/}")"
   mv "$target" "$BACKUP_DIR/${target#"$HOME"/}"
+  MOVED+=("$target")
   warn "backed up $target → $BACKUP_DIR"
+}
+
+restore_backups() {
+  # stow failed after we moved configs aside: put each one back, so a failed
+  # run never leaves $HOME without them. Only where the spot is still empty —
+  # a link stow already made stays, and that file stays in the backup.
+  local target
+  for target in ${MOVED[@]+"${MOVED[@]}"}; do
+    if [[ ! -e "$target" && ! -L "$target" ]]; then
+      mv "$BACKUP_DIR/${target#"$HOME"/}" "$target" && warn "restored $target"
+    else
+      warn "kept in backup (stow linked it): $target → $BACKUP_DIR"
+    fi
+  done
 }
 
 conflicts_in() {
@@ -236,7 +252,11 @@ command -v rustup >/dev/null && { rustup component add rust-analyzer >/dev/null 
 
 say "linking configs"
 backup_conflicts
-stow_cmd --restow "${PACKAGES[@]}"
+if ! stow_cmd --restow "${PACKAGES[@]}"; then
+  warn "stow failed — putting your configs back"
+  restore_backups
+  exit 1
+fi
 command -v herdr >/dev/null && herdr server reload-config >/dev/null 2>&1 || true
 
 say "herdr integrations"
