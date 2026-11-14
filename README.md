@@ -247,9 +247,10 @@ contradicts), **readiness** (what is still undecided before anyone can build it)
 They are inspired by the [Elephant-Goldfish Model](https://egm.dev).
 
 No reviewer can change anything, or read outside what it reviews. Each runs
-under a macOS sandbox (`sandbox-exec`) that refuses reading anything in your
-home folder except the tree under review and that agent's own state, and
-refuses writing to the tree: a doc that tells a reviewer to open `~/.ssh` gets
+under a macOS sandbox (`sandbox-exec`) that refuses reading or writing
+anything in your home folder except reading the tree under review and that
+agent's login file (Codex and Grok also start from an empty home of their own,
+so no transcripts, memory, skills, plugins or MCP servers): a doc that tells a reviewer to open `~/.ssh` gets
 "Operation not permitted". Claude starts in an empty directory without your
 settings, hooks, plugins, MCP servers or auto-memory, and has only
 Read/Grep/Glob (the account email from your login is still in its context).

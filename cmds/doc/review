@@ -11,8 +11,8 @@
 # blind spots. Personas live in cmds/doc/personas/.
 #
 # Each reviewer runs under a macOS Seatbelt profile (sandbox-exec): it cannot
-# read anything in $HOME except the tree under review and its own vendor's
-# state, nor write to the tree — so a doc that tries to talk it into reading
+# read or write anything in $HOME except reading the tree under review and its
+# own login file — no transcripts, memory, skills or MCP config — so a doc that tries to talk it into reading
 # ~/.ssh or another repo gets "Operation not permitted". On top of that:
 #   claude  cwd = empty temp dir, repo via --add-dir; user settings, hooks,
 #           plugins, MCP servers, skills and auto-memory off; tools Read/Grep/
@@ -151,52 +151,69 @@ chmod 700 "$run"   # answers quote the doc and the code
 # Read-only is not enough: a reviewer that can read any path could be talked by
 # the doc (untrusted) into reading ~/.ssh or another repo, and its answer goes
 # to the vendor. So each reviewer runs under a macOS Seatbelt profile that
-# denies reading anything in $HOME except the tree under review and that
-# vendor's own state, and denies writing to the tree. Only the vendor's own
-# state: grok must not read ~/.claude (MCP servers with tokens live there), and
-# no one reads another agent's transcripts. Paths outside $HOME (system,
-# Homebrew, the temp snapshot) stay readable.
+# denies reading and writing anything in $HOME, except:
+#   read   the tree under review; the agent's binary (and its package dir,
+#          when that is a dedicated one); the Keychain (claude's login)
+#   read+write  exactly the login file that vendor needs, nothing else of its
+#          state: no transcripts, history, memory, skills, plugins or MCP config
+# codex and grok also get a fresh, empty home for this run (CODEX_HOME /
+# GROK_HOME) holding only a symlink to their login file — a symlink, so a token
+# refresh lands in the real file. claude cannot (its Keychain login is tied to
+# its config dir), so it keeps ~/.claude.json readable and nothing else.
 need sandbox-exec
-sbx_profile() { # $1 = vendor → path of its profile in $work
-  local v="$1" bin real out="$work/$1.sb" a allow=() deny=()
+safe_pkg_dir() { # $1 = dir → true if it is a dedicated install dir, not a shared one
+  local d="${1%/}" rel
+  # $HOME itself, or a dir that contains it (/, /Users): would open all of it.
+  [[ -n "$d" && "$d" != "$HOME" && "$HOME" != "$d"/* ]] || return 1
+  [[ "$d" == "$HOME"/* ]] || return 0          # beside $HOME: system / Homebrew
+  rel="${d#"$HOME"/}"
+  case "$rel" in */*/*) ;; *) return 1 ;; esac  # $HOME, a child or grandchild: too broad
+  case "$rel" in .local/bin|.local/bin/*|.local/share|bin/*|.cargo/bin*|.config/*) return 1 ;; esac
+  return 0
+}
+sbx_setup() { # $1 = vendor → writes $work/<v>.sb and $work/<v>-home
+  local v="$1" bin real pkg a fh="$work/$1-home" out="$work/$1.sb" rw=() ro=()
+  mkdir -p "$fh"
   case "$v" in
-    claude) allow=("$HOME/.claude" "$HOME/.claude.json")
-            deny=("$HOME/.claude/projects" "$HOME/.claude/history.jsonl" "$HOME/.claude/todos" "$HOME/.claude/file-history") ;;
-    codex)  allow=("$HOME/.codex"); deny=("$HOME/.codex/sessions" "$HOME/.codex/history.jsonl" "$HOME/.codex/memories") ;;
-    grok)   allow=("$HOME/.grok") ;;   # it reads back its own new session
+    claude) ro=("$HOME/.claude.json") ;;
+    codex)  rw=("$HOME/.codex/auth.json"); ln -s "$HOME/.codex/auth.json" "$fh/auth.json" ;;
+    grok)   rw=("$HOME/.grok/auth.json" "$HOME/.grok/auth.json.lock")
+            ln -s "$HOME/.grok/auth.json" "$fh/auth.json"; ln -s "$HOME/.grok/auth.json.lock" "$fh/auth.json.lock" ;;
   esac
-  # The agent's own install, wherever its binary really lives.
-  bin=$(command -v "$v"); real=$(perl -MCwd -e 'print Cwd::abs_path(shift)' "$bin")
-  allow+=("$(dirname "$bin")" "$(dirname "$(dirname "$real")")" "$HOME/Library/Keychains")
-  for a in "$root" "$HOME" ${allow[@]+"${allow[@]}"} ${deny[@]+"${deny[@]}"}; do
+  bin=$(command -v "$v"); real=$(perl -MCwd -e 'print Cwd::abs_path(shift)' "$bin"); pkg=$(dirname "$real")
+  for a in "$HOME" "$root" "$work" "$run" "$bin" "$real" "$pkg" ${rw[@]+"${rw[@]}"} ${ro[@]+"${ro[@]}"}; do
     [[ "$a" != *[\"\\]* ]] || die "path not safe for a sandbox profile: $a"
   done
   {
     echo '(version 1)'
     echo '(allow default)'
-    echo "(deny file-read-data (subpath \"$HOME\"))"
-    printf '(allow file-read-data (subpath "%s"))\n' "$root"
-    for a in ${allow[@]+"${allow[@]}"}; do
-      if [[ -d "$a" ]]; then printf '(allow file-read-data (subpath "%s"))\n' "$a"
-      else printf '(allow file-read-data (literal "%s"))\n' "$a"; fi
-    done
-    for a in ${deny[@]+"${deny[@]}"}; do printf '(deny file-read-data (subpath "%s"))\n' "$a"; done
-    printf '(deny file-write* (subpath "%s"))\n' "$root"
+    printf '(deny file-read-data (subpath "%s"))\n' "$HOME"
+    printf '(deny file-write* (subpath "%s"))\n' "$HOME"
+    printf '(allow file-read-data (subpath "%s") (subpath "%s"))\n' "$root" "$work"
+    printf '(allow file-read-data (literal "%s") (literal "%s") (subpath "%s/Library/Keychains"))\n' "$bin" "$real" "$HOME"
+    if safe_pkg_dir "$pkg"; then printf '(allow file-read-data (subpath "%s"))\n' "$pkg"; fi
+    for a in ${ro[@]+"${ro[@]}"}; do printf '(allow file-read-data (literal "%s"))\n' "$a"; done
+    for a in ${rw[@]+"${rw[@]}"}; do printf '(allow file-read-data file-write* (literal "%s"))\n' "$a"; done
+    printf '(allow file-write* (subpath "%s"))\n' "$run"     # codex writes its answer here
+    printf '(deny file-write* (subpath "%s"))\n' "$root"     # the tree, wherever it is
   } >"$out"
-  printf '%s' "$out"
 }
-for v in $vendors; do sbx_profile "$v" >/dev/null; done
+for v in $vendors; do sbx_setup "$v"; done
 
 # codex: its own read-only sandbox cannot run inside ours (Seatbelt does not
-# nest), so codex gets no tools at all — shell, browser, computer use, apps,
-# plugins, hooks off — and the doc inline. It reviews the doc alone.
+# nest), so codex gets no tools and the doc inline: it reviews the doc alone.
+# Fail closed: every feature codex has on by default (shell, browser, computer
+# use, apps, plugins, hooks… and whatever a new version adds) is turned off;
+# if the list cannot be read, codex does not run.
 codex_off=()
-have_features=$(codex features list 2>/dev/null | awk '{print $1}' || true)
-for f in shell_tool unified_exec unified_exec_tty shell_snapshot browser_use browser_use_external \
-         browser_use_full_cdp_access in_app_browser computer_use apps plugins remote_plugin hooks \
-         skill_search tool_suggest skill_mcp_dependency_install sleep_tool image_generation; do
-  grep -qx "$f" <<<"$have_features" && codex_off+=(--disable "$f")
-done
+if [[ " $vendors " == *" codex "* ]]; then
+  on=$(CODEX_HOME="$work/codex-home" codex features list 2>/dev/null | awk '$NF == "true" { print $1 }') || on=""
+  [[ -n "$on" ]] || die "could not list codex features — not running codex without turning them off"
+  while IFS= read -r f; do
+    [[ "$f" =~ ^[a-z0-9_]+$ ]] || die "unexpected codex feature name: $f"
+    codex_off+=(--disable "$f")
+  done <<<"$on"
+fi
 
 brief() { # $1 = persona, $2 = inline (true: the doc is in the prompt, no tools)
   cat "$pdir/$1.md"
@@ -249,7 +266,7 @@ review() { # $1 = persona, $2 = vendor, $3 = output file
          </dev/null >"$out" 2>"$out.err" || rc=$? ;;
     codex)
       # Prompt on stdin ("-"): the doc can be large, and argv shows in `ps`.
-      brief "$p" true | (cd "$tmp" && with_timeout "$timeout" sandbox-exec -f "$sb" \
+      brief "$p" true | (cd "$tmp" && CODEX_HOME="$work/codex-home" with_timeout "$timeout" sandbox-exec -f "$sb" \
          codex exec --ignore-user-config --ephemeral -s read-only --skip-git-repo-check \
          ${codex_off[@]+"${codex_off[@]}"} -c 'web_search="disabled"' -C "$tmp" -o "$out" -) \
          >"$out.log" 2>&1 || rc=$? ;;
@@ -257,7 +274,7 @@ review() { # $1 = persona, $2 = vendor, $3 = output file
       # Only grok's read tools: by default it also has X search, a terminal
       # and image generation, even in plan mode with web search off.
       prompt=$(brief "$p" false)
-      with_timeout "$timeout" sandbox-exec -f "$sb" grok -p "$prompt" --cwd "$root" \
+      GROK_HOME="$work/grok-home" with_timeout "$timeout" sandbox-exec -f "$sb" grok -p "$prompt" --cwd "$root" \
          --permission-mode plan --no-subagents --disable-web-search --tools read_file,list_dir,grep \
          </dev/null >"$out" 2>"$out.err" || rc=$? ;;
   esac
