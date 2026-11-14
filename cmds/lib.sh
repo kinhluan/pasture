@@ -98,17 +98,23 @@ with_timeout() {
     # Fork the command and, on the alarm, send it SIGTERM then SIGKILL. A plain
     # alarm sends SIGALRM, which Go binaries (gh, glab) ignore; TERM/KILL they
     # honour. The child inherits our stdout, so its output flows through.
+    # A TERM/INT sent to us (Ctrl-C, a caller cleaning up) is passed on to
+    # the command, so it does not outlive us.
     perl -e '
       my $s = shift @ARGV;
       my $pid = fork();
       if (!defined $pid) { exec @ARGV or exit 127; }
       if ($pid == 0) { exec @ARGV or exit 127; }
-      local $SIG{ALRM} = sub { kill "TERM", $pid; sleep 1; kill "KILL", $pid; };
+      my $timed = 0;
+      local $SIG{ALRM} = sub { $timed = 1; kill "TERM", $pid; sleep 1; kill "KILL", $pid; };
+      local $SIG{TERM} = sub { kill "TERM", $pid; };
+      local $SIG{INT}  = sub { kill "INT",  $pid; };
       alarm $s;
-      waitpid($pid, 0);
-      # Killed by a signal (our alarm, or anything else): exit 124 like
-      # coreutils timeout. A plain $? >> 8 would read as success.
-      exit(($? & 127) ? 124 : ($? >> 8));
+      while (waitpid($pid, 0) == -1 && $!{EINTR}) {}
+      # Ran out of time: 124 like coreutils timeout, even if the command
+      # caught the TERM and exited 0. Killed by another signal: 128 + signal.
+      exit 124 if $timed;
+      exit(($? & 127) ? 128 + ($? & 127) : ($? >> 8));
     ' "$secs" "$@"
     return
   fi
