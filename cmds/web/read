@@ -11,7 +11,8 @@
 # This is a `read` command agents run freely, so the browser it falls back to
 # is never your logged-in one: a fresh agent-browser session per call, closed
 # afterwards, with every AGENT_BROWSER_* variable (profile, args, extensions,
-# executable…) removed from its environment. Pages that need your login are
+# executable…) removed from its environment and an empty --config in place of
+# ~/.agent-browser/config.json. Pages that need your login are
 # for `agent-browser --profile …` directly, which you choose to run.
 set -euo pipefail
 . "$PASTURE_DIR/cmds/lib.sh"
@@ -49,8 +50,13 @@ clean=(env)
 while IFS= read -r v; do [[ -n "$v" ]] && clean+=(-u "$v"); done \
   < <(env | sed -n 's/^\(AGENT_BROWSER_[A-Za-z0-9_]*\)=.*/\1/p')
 session="pasture-web-read-$$-$RANDOM"
+# --config with an empty file replaces config discovery: your
+# ~/.agent-browser/config.json (profile, extensions, args…) is never read.
+conf=$(mktemp "${TMPDIR:-/tmp}/pasture-web-read.XXXXXX")
+trap 'rm -f "$conf"' EXIT
+echo '{}' >"$conf"
 rc=0
-text=$("${clean[@]}" agent-browser --session "$session" read "$url" 2>/dev/null) || rc=$?
-"${clean[@]}" agent-browser --session "$session" close >/dev/null 2>&1 || true
+text=$("${clean[@]}" agent-browser --config "$conf" --session "$session" read "$url" 2>/dev/null) || rc=$?
+"${clean[@]}" agent-browser --config "$conf" --session "$session" close >/dev/null 2>&1 || true
 (( rc == 0 )) || { echo "pasture: neither fetch nor agent-browser could read $url" >&2; exit 1; }
 emit browser "$text"
