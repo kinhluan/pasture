@@ -246,18 +246,23 @@ newcomer get lost), **critic** (failure modes, security, claims the code
 contradicts), **readiness** (what is still undecided before anyone can build it).
 They are inspired by the [Elephant-Goldfish Model](https://egm.dev).
 
-No reviewer can change anything. Claude starts in an empty directory without
-your settings, hooks, plugins, MCP servers or auto-memory, and has only
+No reviewer can change anything, or read outside what it reviews. Each runs
+under a macOS sandbox (`sandbox-exec`) that refuses reading anything in your
+home folder except the tree under review and that agent's own state, and
+refuses writing to the tree: a doc that tells a reviewer to open `~/.ssh` gets
+"Operation not permitted". Claude starts in an empty directory without your
+settings, hooks, plugins, MCP servers or auto-memory, and has only
 Read/Grep/Glob (the account email from your login is still in its context).
-Codex runs in its OS read-only sandbox. Grok runs in plan mode, where the app
-refuses writes but the OS does not, so it only ever gets a copy.
+Grok runs in plan mode with only its read, list and grep tools. Codex gets no
+tools at all, since its own sandbox cannot run inside another: the doc goes in
+its prompt and it reviews the doc alone, not the code.
 
 **The doc, and anything a reviewer reads, goes to every vendor used.** What
 they read decides who may see it:
 
 | The doc is… | Reviewers read | Vendors |
 |---|---|---|
-| in a public repo, pushed unchanged | a `git archive` snapshot of origin's default branch: only what is already public | Claude, Codex, Grok |
+| in a public repo, pushed unchanged (checked with origin itself, not a local ref) | a `git archive` snapshot of origin's default branch: only what is already public | Claude, Codex, Grok |
 | in any other repo, or not yet pushed | your working tree | `$PASTURE_PRIVATE_REVIEW_VENDORS` (default `claude`) |
 | not in a git repo | a copy of the doc alone, never the folder around it | the same |
 
