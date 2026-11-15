@@ -7,11 +7,20 @@
 # agent-browser, which runs JavaScript, when the fetch errors or returns a page
 # that is nearly empty or a JS/bot wall. --browser skips the fetch. Output is
 # cut at --max-chars (default 20000). The first line says which way was used.
+#
+# This is a `read` command agents run freely, so the browser it falls back to
+# is never your logged-in one: a fresh agent-browser session per call, closed
+# afterwards, with every AGENT_BROWSER_* variable (profile, args, extensions,
+# executable…) removed from its environment and an empty --config in place of
+# ~/.agent-browser/config.json. Pages that need your login are
+# for `agent-browser --profile …` directly, which you choose to run.
 set -euo pipefail
 . "$PASTURE_DIR/cmds/lib.sh"
 need curl
 
 url="${1:-}"; [[ -n "$url" && "$url" != -* ]] || usage "pasture web read <url> [--browser] [--max-chars N]"
+# Web pages only: no file://, no other schemes, and redirects stay on http(s).
+[[ "$url" =~ ^https?:// ]] || usage "pasture web read <http(s) url> [--browser] [--max-chars N]"
 shift
 browser=false max=20000
 while (( $# )); do
@@ -25,7 +34,7 @@ done
 emit() { printf '[%s] %s\n' "$1" "$url"; printf '%s' "$2" | head -c "$max"; echo; }
 
 if ! $browser; then
-  if html=$(curl -fsSL --max-time 20 -A "Mozilla/5.0 (Macintosh) pasture" "$url" 2>/dev/null); then
+  if html=$(curl -fsSL --proto =http,https --proto-redir =http,https --max-time 20 -A "Mozilla/5.0 (Macintosh) pasture" "$url" 2>/dev/null); then
     text=$(printf '%s' "$html" | textutil -convert txt -stdin -stdout -format html 2>/dev/null \
            | sed 's/[[:space:]]*$//' | cat -s)
     # A shell that only renders with JavaScript, or a bot wall, reads as
@@ -37,5 +46,17 @@ if ! $browser; then
 fi
 
 need agent-browser
-text=$(agent-browser read "$url" 2>/dev/null) || { echo "pasture: neither fetch nor agent-browser could read $url" >&2; exit 1; }
+clean=(env)
+while IFS= read -r v; do [[ -n "$v" ]] && clean+=(-u "$v"); done \
+  < <(env | sed -n 's/^\(AGENT_BROWSER_[A-Za-z0-9_]*\)=.*/\1/p')
+session="pasture-web-read-$$-$RANDOM"
+# --config with an empty file replaces config discovery: your
+# ~/.agent-browser/config.json (profile, extensions, args…) is never read.
+conf=$(mktemp "${TMPDIR:-/tmp}/pasture-web-read.XXXXXX")
+trap 'rm -f "$conf"' EXIT
+echo '{}' >"$conf"
+rc=0
+text=$("${clean[@]}" agent-browser --config "$conf" --session "$session" read "$url" 2>/dev/null) || rc=$?
+"${clean[@]}" agent-browser --config "$conf" --session "$session" close >/dev/null 2>&1 || true
+(( rc == 0 )) || { echo "pasture: neither fetch nor agent-browser could read $url" >&2; exit 1; }
 emit browser "$text"

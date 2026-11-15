@@ -5,7 +5,9 @@
 #
 # Run in a repo where the stack was built with `sl` (see `sl stack`). Commit n
 # of the stack, bottom first, goes to branch <prefix>-<n>-<slug of its title>.
-# Rerun after `sl amend` / `sl absorb`: branches that changed are force-pushed.
+# Rerun after `sl amend` / `sl absorb`: branches that changed are force-pushed,
+# with a lease on the remote commit the plan showed — if someone pushed to the
+# branch since, the push is refused instead of overwriting their work.
 # --mr also opens a GitLab merge request per branch with glab, each targeting
 # the branch below it (the first targets --base, default the default branch),
 # or fixes the target of an existing one.
@@ -43,10 +45,21 @@ while IFS=$'\t' read -r node title; do
   nodes+=("$node"); titles+=("$title")
 done <<<"$stack"
 
+# Where each branch stands on the remote now; the push leases on exactly this.
+heads=$(git ls-remote --heads origin 2>/dev/null) || die "could not reach origin"
+remotes=()
+for (( k = 0; k < total; k++ )); do
+  remotes+=("$(awk -v r="refs/heads/${names[$k]}" '$2==r{print $1; exit}' <<<"$heads")")
+done
+
 echo "stack of $total on $base:"
 for (( k = 0; k < total; k++ )); do
   tgt="$base"; (( k > 0 )) && tgt="${names[$((k - 1))]}"
-  echo "  $((k + 1))/$total ${nodes[$k]:0:10} → ${names[$k]}$($mr && echo "   MR into $tgt")"
+  r="${remotes[$k]}"
+  if   [[ -z "$r" ]];                then st="new branch"
+  elif [[ "$r" == "${nodes[$k]}" ]]; then st="unchanged"
+  else                                    st="FORCE-PUSH over ${r:0:10}"; fi
+  echo "  $((k + 1))/$total ${nodes[$k]:0:10} → ${names[$k]}  ($st)$($mr && echo "   MR into $tgt")"
 done
 if ! $yes; then
   echo "plan only; rerun with --yes to push$($mr && echo " and open the merge requests") (ask the user first)"
@@ -54,12 +67,14 @@ if ! $yes; then
 fi
 
 for (( k = 0; k < total; k++ )); do
-  b="${names[$k]}"
-  remote=$(git ls-remote --heads origin "refs/heads/$b" | cut -f1)
-  if [[ -z "$remote" ]]; then
+  b="${names[$k]}" r="${remotes[$k]}"
+  if [[ -z "$r" ]]; then
     sl push -q -r "${nodes[$k]}" --to "$b" --create
-  elif [[ "$remote" != "${nodes[$k]}" ]]; then
-    sl push -q -r "${nodes[$k]}" --to "$b" --force
+  elif [[ "$r" != "${nodes[$k]}" ]]; then
+    # sl push --force has no lease; git does, and the stack's commits live in
+    # this repo's .git. Refused if the branch moved since the plan above.
+    git push -q --force-with-lease="refs/heads/$b:$r" origin "${nodes[$k]}:refs/heads/$b" \
+      || die "$b changed on origin since the plan (was ${r:0:10}) — not overwriting; fetch and look first"
   fi
   echo "  ✓ $b"
 done
