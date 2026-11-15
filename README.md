@@ -294,6 +294,7 @@ pasture list --json                  # the same, for agents
 | `pasture agent ask <name> "<prompt>"` | write | prompt another agent, wait, print its answer; refuses when it is blocked on the user |
 | `pasture mr fanout <branch>…` | external | move stacked branches onto the default branch (trunk-based), in a temporary worktree, force-push with lease |
 | `pasture stack push <prefix> [--mr]` | external | push each commit of a Sapling stack to its own branch, optionally as a chain of MRs |
+| `pasture stack attach` | write | put git's HEAD back on this worktree's branch after Sapling detached it (the Sapling hooks run it for you) |
 | `pasture sec pentest <dir\|url>…` | external | 🛡 Strix AI pentest of your own code or local app, on a copy, with a model the target's privacy allows |
 
 **Safety levels.** `read` only reads. `write` changes local state and has
@@ -400,9 +401,15 @@ sl push --to feature/PROJ-1234-step-1          # publish to a git branch
 `⌃⌥G` shows the stack of the focused pane's repo; press `w` to open it in
 Sapling's browser UI (`sl web`).
 
-- **Detached HEAD.** `sl` leaves git's HEAD detached. Push with
-  `sl push --to <branch>`; a `git commit` there, yours or an agent's, moves no
-  branch.
+- **Detached HEAD.** `sl commit` on a branch moves the branch, but `sl prev`,
+  `sl next` and `sl goto` leave git's HEAD detached. Detached, a worktree no
+  longer holds its branch: another worktree can check it out, and `wt list` and
+  `pasture-task --done` stop finding the task. pasture's Sapling hooks run
+  `pasture stack attach` after each of them, which puts HEAD back on the branch
+  once you are at the top of the stack again (and fast-forwards the branch if
+  you committed on top while detached). Mid-stack it stays detached until
+  `sl top`. `pasture repo who` shows a detached worktree's task branch. Push
+  with `sl push --to <branch>`.
 - **GitLab.** `sl pr` (stacked pull requests) is GitHub only. On GitLab, push
   each step to its own branch and open the merge requests with `glab`.
 - **Parallel work.** A stack is a sequence in one working copy. Two tasks at the

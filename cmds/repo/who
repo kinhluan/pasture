@@ -35,6 +35,20 @@ wts=$(git -C "$dir" worktree list --porcelain | awk '
   /^worktree /{ if (p != "") print p "\037" b; p = substr($0, 10); b = "(detached)" }
   /^branch /  { b = substr($0, 8); sub(/^refs\/heads\//, "", b) }
   END         { if (p != "") print p "\037" b }')
+# A worktree Sapling left detached still belongs to a task: show the branch
+# recorded for it (pasture-task / pasture stack attach), and whether another
+# worktree has meanwhile checked that branch out — git's lock is gone then.
+raw="$wts"
+wts=$(while IFS=$'\037' read -r p b; do
+  if [[ "$b" == "(detached)" ]]; then
+    t=$(tr -d '[:cntrl:]' <"$(git -C "$p" rev-parse --absolute-git-dir 2>/dev/null)/pasture-branch" 2>/dev/null || true)
+    if [[ -n "$t" ]]; then
+      holder=$(awk -F'\037' -v t="$t" '$2 == t { print $1; exit }' <<<"$raw")
+      b="detached · task $t$([[ -n "$holder" ]] && printf ' — ⚠ checked out in %s' "${holder##*/}")"
+    fi
+  fi
+  printf '%s\037%s\n' "$p" "$b"
+done <<<"$raw")
 
 # Agents: pane \037 agent \037 status \037 dir \037 title. An agent can cd
 # away from where it started, so its shell's directory (foreground_cwd) counts
