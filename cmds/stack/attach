@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# summary: Put git's HEAD back on this worktree's branch after Sapling detached it
+# usage:   pasture stack attach [--branch B] [--dry-run] [--quiet]
+# safety:  write
+#
+# `sl prev`, `sl next` and `sl goto` leave git's HEAD detached (a plain
+# `sl commit` on an attached HEAD does not). Detached, the worktree no longer
+# holds its branch: git's "one branch, one worktree" lock is gone, so another
+# worktree can check the branch out, and `wt list` / `pasture-task --done` stop
+# finding the task. This puts HEAD back on the branch, without touching files:
+#   HEAD is the branch's tip            → attach (same commit, nothing changes)
+#   HEAD is ahead of it (commits made   → move the branch up to HEAD
+#     on top while detached)              (a fast-forward), then attach
+#   HEAD is below it (mid-stack)        → nothing yet: `sl top`, then attach
+#   HEAD and the branch have diverged   → nothing: look first (exit 3)
+#
+# Which branch: --branch, else the one recorded for this worktree (pasture-task
+# records it; so does this command whenever it finds HEAD attached), else the
+# only local branch at HEAD that no other worktree has checked out.
+# --quiet prints nothing and always exits 0 — for the Sapling hooks in
+# pasture's sapling.conf, which run it after sl goto/next/prev.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need git
+
+u="pasture stack attach [--branch B] [--dry-run] [--quiet]"
+branch="" dry=false quiet=false
+while (( $# )); do
+  case "$1" in
+    --branch)  branch="${2:?}"; shift 2 ;;
+    --dry-run) dry=true; shift ;;
+    --quiet)   quiet=true; shift ;;
+    *)         usage "$u" ;;
+  esac
+done
+say()  { $quiet || echo "$*"; }
+stop() { # $1 = exit code, rest = message
+  local rc="$1"; shift
+  $quiet && exit 0
+  echo "$*" >&2; exit "$rc"
+}
+git rev-parse --git-dir >/dev/null 2>&1 || stop 5 "pasture: not inside a git repo"
+
+# Per-worktree git dir (.git/worktrees/<name>, or .git for the main one).
+record="$(git rev-parse --absolute-git-dir)/pasture-branch"
+here=$(git rev-parse --show-toplevel)
+
+if cur=$(git symbolic-ref --quiet --short HEAD); then
+  # Attached: remember it, so a later detach knows where to come back to.
+  if ! $dry && [[ "$(cat "$record" 2>/dev/null)" != "$cur" ]]; then printf '%s\n' "$cur" >"$record"; fi
+  say "✓ on $cur"; exit 0
+fi
+
+head=$(git rev-parse HEAD)
+# Branches other worktrees hold, as "branch<TAB>path".
+held=$(git worktree list --porcelain | awk -v me="$here" '
+  /^worktree /{ p = substr($0, 10) }
+  /^branch /  { b = substr($0, 8); sub(/^refs\/heads\//, "", b); if (p != me) print b "\t" p }')
+
+if [[ -z "$branch" ]]; then branch=$(cat "$record" 2>/dev/null || true); fi
+if [[ -z "$branch" ]]; then
+  # Only an unambiguous guess: exactly one free local branch at HEAD.
+  branch=$(git for-each-ref --points-at "$head" --format='%(refname:short)' refs/heads \
+    | awk -F'\t' 'NR == FNR { h[$1] = 1; next } !($0 in h)' <(printf '%s\n' "$held") - \
+    | awk 'END { if (NR == 1) print last } { last = $0 }')
+fi
+[[ -n "$branch" ]] || stop 3 "HEAD is detached and this worktree has no known branch: pasture stack attach --branch <b>"
+git check-ref-format --branch "$branch" >/dev/null 2>&1 || stop 2 "not a branch name: $branch"
+tip=$(git rev-parse -q --verify "refs/heads/$branch^{commit}" 2>/dev/null) \
+  || stop 1 "branch $branch does not exist (any more)"
+
+other=$(awk -F'\t' -v b="$branch" '$1 == b { print $2; exit }' <<<"$held")
+[[ -z "$other" ]] || stop 3 "$branch is checked out in $other — two worktrees cannot share it"
+
+if [[ "$head" == "$tip" ]]; then
+  $dry && { say "would attach HEAD to $branch (same commit)"; exit 0; }
+elif git merge-base --is-ancestor "$tip" "$head"; then
+  n=$(git rev-list --count "$tip..$head")
+  $dry && { say "would move $branch up $n commit(s) to HEAD and attach"; exit 0; }
+  git update-ref -m "pasture stack attach: fast-forward" "refs/heads/$branch" "$head" "$tip"
+  say "↑ moved $branch up $n commit(s) to HEAD"
+elif git merge-base --is-ancestor "$head" "$tip"; then
+  n=$(git rev-list --count "$head..$tip")
+  stop 3 "mid-stack: HEAD is $n commit(s) below $branch — sl top, then pasture stack attach"
+else
+  stop 3 "HEAD and $branch have diverged — not moving anything; look with: sl stack"
+fi
+
+# Same commit as HEAD now, so only HEAD itself changes: no file, no index.
+git symbolic-ref -m "pasture stack attach" HEAD "refs/heads/$branch"
+printf '%s\n' "$branch" >"$record"
+say "✓ attached HEAD to $branch"

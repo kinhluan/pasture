@@ -18,10 +18,20 @@ usage() { sed -n '3,9p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
 command -v wt >/dev/null || die "Worktrunk is not installed: brew install worktrunk"
 git rev-parse --git-dir >/dev/null 2>&1 || die "not inside a git repo"
 
-# Path of the worktree checked out for a branch, from wt's JSON.
+# Path of the worktree checked out for a branch, from wt's JSON — or, when
+# Sapling left that worktree's HEAD detached (wt then sees no branch), the one
+# whose recorded task branch it is (see `pasture stack attach`).
 path_of() {
-  wt list --format=json | jq -r --arg b "$1" \
-    '.items[] | select(.branch == $b) | .worktree.path // empty' | head -1
+  local p w
+  p=$(wt list --format=json | jq -r --arg b "$1" \
+    '.items[] | select(.branch == $b) | .worktree.path // empty' | head -1)
+  if [[ -z "$p" ]]; then
+    while IFS= read -r w; do
+      [[ "$(cat "$(git -C "$w" rev-parse --absolute-git-dir 2>/dev/null)/pasture-branch" 2>/dev/null)" == "$1" ]] \
+        && { p="$w"; break; }
+    done < <(git worktree list --porcelain | sed -n 's/^worktree //p')
+  fi
+  printf '%s\n' "$p"
 }
 # herdr workspace whose panes sit in a directory (or below it).
 workspace_at() {
@@ -42,7 +52,17 @@ if [[ "${1:-}" == "--done" ]]; then
     [[ "$ok" == [yY]* ]] || exit 0
     herdr workspace close "$ws" >/dev/null
   fi
-  wt remove "$branch"
+  # wt finds the worktree by its branch: put a Sapling-detached HEAD back first.
+  (cd "$path" && pasture stack attach --quiet) || true
+  if [[ "$(git -C "$path" branch --show-current)" == "$branch" ]]; then
+    wt remove "$branch"
+  else
+    # Still detached (mid-stack or diverged): remove it with git; the branch
+    # goes only if it is merged (-d refuses otherwise), like wt remove.
+    echo "🌱 $path is not on $branch (detached HEAD): removing it with git"
+    git worktree remove "$path"
+    git branch -d "$branch" 2>/dev/null || echo "🌱 kept branch $branch (not merged)"
+  fi
   exit 0
 fi
 
@@ -75,6 +95,9 @@ if [[ -z "$path" ]]; then
   path=$(path_of "$branch")
 fi
 [[ -n "$path" && -d "$path" ]] || die "Worktrunk made no worktree for '$branch'"
+# Remember the task's branch in the worktree's own git dir, so it can be put
+# back on it after Sapling detaches HEAD (pasture stack attach).
+printf '%s\n' "$branch" >"$(git -C "$path" rev-parse --absolute-git-dir)/pasture-branch"
 
 ws=$(workspace_at "$path")
 if [[ -n "$ws" ]]; then
