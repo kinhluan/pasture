@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# summary: Which agents stand in which worktree of this repo — look before you code here
+# usage:   pasture repo who [dir] [--check] [--json]
+# safety:  read
+#
+# git locks a branch to one worktree, but not a directory: a second agent can
+# still cd into a worktree another agent is editing. This lists every worktree
+# of the repo that holds [dir] (default: here) with its branch, uncommitted file
+# count, and the herdr agents whose directory is inside it. ⚠ marks a worktree
+# with two or more agents in it.
+#
+# --check is for an agent about to edit: exit 3 when another agent (not this
+# pane) is in the same worktree as [dir], 0 when it is free. Make your own
+# worktree then (pasture-task <branch>) instead of working beside it.
+set -euo pipefail
+. "$PASTURE_DIR/cmds/lib.sh"
+need git herdr jq
+
+dir="." check=false json=false
+while (( $# )); do
+  case "$1" in
+    --check) check=true; shift ;;
+    --json)  json=true; shift ;;
+    -*)      usage "pasture repo who [dir] [--check] [--json]" ;;
+    *)       dir="$1"; shift ;;
+  esac
+done
+[[ -d "$dir" ]] || usage "pasture repo who [dir] [--check] [--json]"
+dir=$(cd -P "$dir" && pwd)
+git -C "$dir" rev-parse --git-dir >/dev/null 2>&1 || { echo "pasture: $dir is not inside a git repo" >&2; exit 5; }
+here=$(git -C "$dir" rev-parse --show-toplevel)
+
+# Worktrees: path \037 branch. Porcelain gives one block per worktree.
+wts=$(git -C "$dir" worktree list --porcelain | awk '
+  /^worktree /{ if (p != "") print p "\037" b; p = substr($0, 10); b = "(detached)" }
+  /^branch /  { b = substr($0, 8); sub(/^refs\/heads\//, "", b) }
+  END         { if (p != "") print p "\037" b }')
+
+# Agents: pane \037 agent \037 status \037 dir \037 title. An agent can cd
+# away from where it started, so its shell's directory (foreground_cwd) counts
+# as well as its own (cwd): one row per distinct directory.
+agents=$(herdr agent list 2>/dev/null) || die "could not reach herdr"
+rows=$(jq -r '.result.agents[]? |
+  [.pane_id, .agent, .agent_status, (.terminal_title_stripped // "")] as $a |
+  ([.cwd, .foreground_cwd] | map(select(. != null and . != "")) | unique[]) as $d |
+  $a[0:3] + [$d, $a[3]] | map(gsub("[[:cntrl:]]"; "")) | join("\u001f")' <<<"$agents")
+
+# Give each agent row to the worktree that holds its directory. Worktrees nest
+# (.worktrees/<b> sits inside the main one), so the longest match wins. A pane
+# lands in a worktree once, even when both its directories are in it.
+matched=$(awk -F'\037' '
+  NR == FNR { wt[++n] = $1; next }
+  {
+    best = 0
+    for (i = 1; i <= n; i++)
+      if (($4 == wt[i] || index($4, wt[i] "/") == 1) && length(wt[i]) > length(wt[best])) best = i
+    if (best && !seen[best, $1]++) print wt[best] "\037" $1 "\037" $2 "\037" $3 "\037" $5
+  }' <(printf '%s\n' "$wts") <(printf '%s\n' "$rows"))
+
+me="${HERDR_PANE_ID:-}"
+
+if $check; then
+  others=$(awk -F'\037' -v w="$here" -v me="$me" '$1 == w && $2 != me' <<<"$matched")
+  [[ -z "$others" ]] && { echo "✓ no other agent in $here"; exit 0; }
+  echo "⚠ another agent is in $here:"
+  while IFS=$'\037' read -r _ pane agent status title; do
+    echo "  $pane $agent ($status) ${title:0:60}"
+  done <<<"$others"
+  echo "make your own worktree instead: pasture-task <branch>"
+  exit 3
+fi
+
+# One record per worktree, with its agents.
+recs=""
+while IFS=$'\037' read -r path branch; do
+  [[ -n "$path" ]] || continue
+  dirty=$(git -C "$path" status --porcelain 2>/dev/null | awk 'END{print NR}' || echo "?")
+  recs+="W"$'\037'"$path"$'\037'"$branch"$'\037'"$dirty"$'\n'
+  recs+=$(awk -F'\037' -v w="$path" '$1 == w { print "A\037" $2 "\037" $3 "\037" $4 "\037" $5 }' <<<"$matched")
+  recs+=$'\n'
+done <<<"$wts"
+
+if $json; then
+  printf '%s' "$recs" | jq -Rn --arg me "$me" '
+    reduce (inputs | select(length > 0) | split("\u001f")) as $r ([];
+      if $r[0] == "W" then . + [{path: $r[1], branch: $r[2], dirty: ($r[3] | tonumber? // null), agents: []}]
+      else .[-1].agents += [{pane: $r[1], agent: $r[2], status: $r[3], title: $r[4], me: ($r[1] == $me)}] end)
+    | map(. + {shared: (.agents | length >= 2)})'
+  exit 0
+fi
+
+sicon() { case "$1" in blocked) echo ⛔;; "done") echo ✅;; working) echo 🏃;; idle) echo 💤;; *) echo ❔;; esac; }
+main=$(head -1 <<<"$wts"); main="${main%%$'\037'*}"
+y=$'\033[33m'; r=$'\033[0m'
+while IFS=$'\037' read -r kind a b c d; do
+  case "$kind" in
+    W)
+      rel="${a#"$main"}"; rel="${rel#/}"; [[ -n "$rel" ]] || rel="."
+      n=$(awk -F'\037' -v w="$a" '$1 == w' <<<"$matched" | awk 'END{print NR}')
+      flag=""; (( n >= 2 )) && flag="  ${y}⚠ $n agents share this worktree${r}"
+      mark=""; [[ "$a" == "$here" ]] && mark=" ← here"
+      dirty=""; [[ "$c" != 0 ]] && dirty="  ✎ $c uncommitted"
+      echo "🌿 $rel ($b)$dirty$mark$flag"
+      if (( n == 0 )); then echo "     (no agent)"; fi
+      ;;
+    A)
+      you=""; [[ "$a" == "$me" ]] && you="  ← you"
+      printf '     %s %-6s %-6s %s%s\n' "$(sicon "$c")" "$a" "$b" "${d:0:50}" "$you"
+      ;;
+  esac
+done <<<"$recs"

@@ -34,6 +34,8 @@ if [[ "${1:-}" == "--done" ]]; then
   path=$(path_of "$branch")
   [[ -n "$path" ]] || die "no worktree for '$branch' (wt list shows them)"
   ws=$(workspace_at "$path")
+  # Agents in the worktree may sit in other workspaces too: show them all.
+  pasture repo who "$path" 2>/dev/null | awk '/^🌿/{on = index($0, " ← here") > 0} on' || true
   if [[ -n "$ws" ]]; then
     # Closing the workspace ends any agent still running in it.
     read -r -p "🌱 close herdr workspace $ws and remove $path? [y/N] " ok || exit 0
