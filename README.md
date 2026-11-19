@@ -468,6 +468,12 @@ Agents learn the full tool with `agent-browser skills get core`. Pointed at a
 logged-in browser profile, an agent can do anything you can on those sites;
 use a separate profile for anything sensitive.
 
+Each herdr pane gets its own browser: `pasture.zsh` sets
+`AGENT_BROWSER_SESSION=pane-<pane id>`, so agents running side by side never
+share tabs or `@e` refs. Each session is a separate Chrome, which costs memory;
+`agent-browser session list` shows them and `agent-browser close --all` closes
+them. Set `AGENT_BROWSER_SESSION` yourself to share one browser on purpose.
+
 ## ☕ Java and 🦀 Rust
 
 - **Java:** Homebrew installs Eclipse Temurin 21 and Maven. `pasture.zsh` sets
@@ -531,7 +537,17 @@ pixel matching) and acts on refs.
 agent-desktop snapshot --app Finder -i   # interactive elements, each with a ref
 agent-desktop click @s8f3k2p9:e8         # refs belong to that snapshot
 agent-desktop skills get desktop         # the guide agents should read first
+agent-desktop skills get platform        # then the macOS part: permissions, quirks
 ```
+
+By default it acts only through the accessibility API. Hover, drag,
+double-click and clicks at screen coordinates move the real mouse and need
+`--headed`, so an agent has to ask for them explicitly.
+
+**One agent at a time.** Unlike agent-browser, there is no per-pane session:
+the screen, keyboard focus and mouse belong to the whole Mac. Two agents
+driving apps at once steal focus from each other, so give desktop tasks to a
+single agent.
 
 It does nothing until macOS allows it, and that permission goes to the app it
 runs in: **Ghostty**. Granting Ghostty Accessibility (and Screen Recording, for
