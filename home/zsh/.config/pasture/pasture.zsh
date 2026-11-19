@@ -42,6 +42,14 @@ jdk() {
 # Everything that opens an editor (git, gh, glab, Claude Code's ctrl+g) uses Helix.
 export EDITOR=hx VISUAL=hx
 
+# agent-browser: one session per herdr pane. Without it every agent drives the
+# same default browser, so parallel agents overwrite each other's tabs and @refs.
+# Agents started in the pane inherit it; a value you set yourself wins. Session
+# names allow only letters, digits, - and _, hence the substitution.
+if [[ -n $HERDR_PANE_ID && -z $AGENT_BROWSER_SESSION ]]; then
+  export AGENT_BROWSER_SESSION="pane-${HERDR_PANE_ID//[^A-Za-z0-9_-]/_}"
+fi
+
 # Completions for the CLIs pasture installs. Each prints a script that calls
 # `compdef` when sourced, so this needs compinit to have run already.
 if (( $+functions[compdef] )); then
