@@ -1,6 +1,6 @@
 # Starship — https://starship.rs/config/
 # No palette on purpose: modules use named ANSI colors, so the prompt follows
-# Ghostty's theme like Helix and lazygit do (see README "Colors").
+# Ghostty's theme like Helix and lazygit do (see docs/customize.md "Colors").
 # Emoji instead of Nerd Font glyphs: they render in any font, no patching.
 "$schema" = 'https://starship.rs/config-schema.json'
 

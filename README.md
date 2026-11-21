@@ -14,8 +14,8 @@ you, and get there in one key. pasture is a dotfiles repo that wires
 [herdr](https://herdr.dev), [Ghostty](https://ghostty.org),
 [Helix](https://helix-editor.com), [lazygit](https://github.com/jesseduffield/lazygit),
 [starship](https://starship.rs) and [Sapling](https://sapling-scm.com) into one
-setup, plus a few small scripts and a 🐕 border collie that watches the agents
-(the sheep) for you.
+setup, plus a library of small tested commands and a 🐕 border collie that
+watches the agents (the sheep) for you.
 
 Ghostty is the terminal app. herdr runs inside it: a terminal multiplexer, like
 tmux, that knows about coding agents. A herdr **workspace** holds **tabs**, a
@@ -29,41 +29,77 @@ are working, done or waiting for you. Sessions keep running when you detach.
 | Grok Build | xAI | `grok` |
 | Antigravity (CLI; the IDE is a separate app) | Google | `agy` |
 
+📖 **Full documentation: [docs/](docs/README.md)**
+
 ## ✨ What you get
+
+**Herding**
 
 - **🧭 One layout per repo.** `pasture-layout` turns a herdr tab into shell,
   agent and lazygit. Helix is a popup (`⌃⌥E`), not a pane, so the agent keeps
   the width.
 - **🐕 A collie for the flock.** A notification when an agent is done or waiting
   for you, `⌃⌥A` to land on it, a 🐕 in the sidebar until you look, `⌃⌥S` for a
-  board of every agent, `⌃⌥X` to send the idle ones home.
-- **👯 Writer and reviewers.** `pasture-duo` starts one writer and up to three
-  read-only reviewers (any mix of the four agents) and hands the writer a
-  review-loop prompt.
+  board of every agent, `⌃⌥X` to send the idle ones home and call them back
+  later. [More](docs/collie.md)
+- **🔎 Know what an agent left running.** `pasture agent ps` shows the dev
+  servers, ports and children behind an "idle" agent; `pasture agent stop`
+  ends one that won't quit, after you say yes. [More](docs/collie.md#-before-you-stop-an-agent-pasture-agent-ps)
+- **🗺️ Every task's stage at a glance.** `pasture flow board` shows each
+  agent's task as spawned, coding, in review, CI, mergeable or merged, and
+  the tab bar shows the Mac's load and memory pressure. [More](docs/collie.md#%EF%B8%8F-where-every-task-stands-pasture-flow-board)
+
+**Working in parallel**
+
 - **🌱 One task, one worktree.** `pasture-task <branch> [agent]` makes a git
   worktree with [Worktrunk](https://worktrunk.dev), opens a herdr workspace in
-  it and sets up the layout, so parallel agents never share a working copy.
+  it and sets up the layout, so parallel agents never share a working copy;
+  `pasture repo who` shows who is already in a repo. [More](docs/worktrees-and-stacks.md)
 - **🪜 Stacked commits.** Sapling runs inside your existing git repos and
-  worktrees; `⌃⌥G` shows the stack you are on.
+  worktrees; `⌃⌥G` shows the stack you are on, and `pasture stack push` turns
+  it into a chain of GitLab MRs. [More](docs/worktrees-and-stacks.md#stacks-with-sapling)
+- **👯 Writer and reviewers.** `pasture-duo` starts one writer and up to three
+  read-only reviewers (any mix of the four agents) and hands the writer a
+  review-loop prompt. `pasture doc review` reviews a doc with new, context-free
+  agents from several vendors, each in a macOS sandbox. [More](docs/review.md)
+
+**Safe by default**
+
+- **🔑 No secret reaches a public remote.** A pre-push guard
+  (`pasture git protect`) blocks a push carrying a secret when the remote is
+  public or its visibility is unknown. [More](docs/security.md#-secrets-never-reach-a-public-remote)
+- **🧪 Offline scans.** `pasture dep audit` runs gitleaks, semgrep and grype
+  over a repo without uploading it; `pasture dep cve` checks one package or
+  CVE. [More](docs/security.md#-scanning-a-repo-and-its-dependencies)
+- **🛡 Pentest your own app.** `pasture sec pentest` runs Strix on a copy of
+  your code or a local app, with a model the target's privacy allows. [More](docs/security.md#-pentesting-your-own-app)
+- **🔒 Nothing secret inside.** Logins stay in the Keychain; the repo is safe to
+  fork. Every command that touches other systems prints its plan and waits for
+  `--yes`. [More](docs/security.md#-trust)
+
+**For every agent**
+
+- **🧰 Tested commands instead of one-off scripts.** `pasture <group> <command>`
+  is a library of scripts for the local CLIs (herdr, git, Sapling, glab,
+  agent-browser) that agents run instead of writing their own, each labelled
+  read, write or external. [All commands](docs/commands.md)
 - **📚 One set of skills for every agent.** `pasture-skills` installs the
   packs in `skills.conf` into Claude Code, Codex, Grok and Antigravity alike;
-  by default [The Art of Agent Skills](https://github.com/kinhluan/skills).
-- **🧰 Tested commands instead of one-off scripts.** `pasture <group> <command>`
-  is a small library of scripts for the local CLIs (herdr, git, Sapling,
-  glab, agent-browser) that agents run instead of writing their own, each
-  labelled read, write or external.
+  by default [The Art of Agent Skills](https://github.com/kinhluan/skills). [More](docs/skills.md)
 - **🌐 A browser every agent can drive.** [agent-browser](https://agent-browser.dev)
-  lets any agent with a shell open, click, fill and screenshot pages, including
-  the JS-rendered and logged-in ones a plain fetch can't read.
-  [agent-desktop](https://github.com/vercel-labs/agent-desktop) does the same
-  for native Mac apps, once you allow it.
+  lets any agent with a shell open, click, fill and screenshot pages, one
+  browser per pane; [agent-desktop](https://github.com/vercel-labs/agent-desktop)
+  does the same for native Mac apps, once you allow it. [More](docs/web-and-desktop.md)
+
+**Comfort**
+
 - **🏷️ A sidebar that reads at a glance.** Each project is tagged with its type
   (🏗️ Bazel, ☕ Java, 🐍 Python, 🟢 Node…) and each agent with its maker
   (🟠 Anthropic, 🟢 OpenAI, ⚫ xAI, 🔵 Google), kept fresh by a herdr plugin.
-- **🎨 One palette.** Ghostty's theme colors herdr, Helix, lazygit and the prompt.
+- **🎨 One palette.** Ghostty's theme colors herdr, Helix, lazygit and the prompt. [More](docs/customize.md)
 - **🔄 One update command.** `pasture-update` updates herdr and every agent CLI.
-- **🔒 Nothing secret inside.** Logins stay in the Keychain; the repo is safe to
-  fork.
+- **☕🦀📦 Toolchains ready.** Java 21, Rust tools, Node through fnm, pnpm, bun,
+  uv and Bazel, with language servers for Helix. [More](docs/languages.md)
 
 ## 🚀 Install
 
@@ -72,9 +108,8 @@ in the Brewfile because they ship their own self-updating installers:
 
 ```bash
 brew install --cask ghostty                    # the terminal, if you don't have it
-curl -fsSL https://herdr.dev/install.sh | sh   # read it first, see Trust below
-# plus whichever agents you use (table above), each from its maker's installer;
-# pasture-update keeps them current afterwards (agents.conf)
+curl -fsSL https://herdr.dev/install.sh | sh   # read it first, see docs/security.md › Trust
+# plus whichever agents you use (table above), each from its maker's installer
 ```
 
 Then clone pasture anywhere and run the setup:
@@ -87,50 +122,19 @@ cd pasture
 ```
 
 The links point back into the clone, so keep it where it is (if you move it,
-run `./setup.sh` again). `setup.sh` does, in order:
-
-1. `brew bundle` with the [Brewfile](Brewfile); `starpls` (the Bazel
-   language server) from its GitHub release, checksum-verified; the newest
-   Node LTS through fnm when there is none (the skills step below needs it);
-   and rust-analyzer when rustup is installed.
-2. Moves any existing config that would be replaced to
-   `~/.pasture-backup/<timestamp>/` (owner-only). Nothing is overwritten.
-3. Links every package under `home/` into `$HOME` with GNU Stow.
-4. Installs herdr's integrations for the agents you have and links pasture's
-   herdr plugins.
-5. Installs the skill packs in [`skills.conf`](skills.conf) for every agent
-   (`pasture-skills`).
-6. Checks herdr's config, Helix's language servers, logins and the `.zshrc` line,
-   and warns about anything missing.
-
-`./setup.sh --unstow` removes the links and unlinks the plugins.
+run `./setup.sh` again). Existing configs are moved to
+`~/.pasture-backup/<timestamp>/`, never overwritten; `./setup.sh --unstow`
+removes the links. [What setup.sh does, step by step](docs/install.md)
 
 Once per machine:
 
 1. Add `source ~/.config/pasture/pasture.zsh` at the **end** of `~/.zshrc`
-   (see [Shell](#-shell)).
+   ([why the end](docs/install.md#-shell)).
 2. Log in to the forges you use: `gh auth login` for GitHub, and
    `glab auth login --hostname <your gitlab host>` only if you use the
    `pasture mr …` commands, which are GitLab-only.
 3. Allow notifications for **Ghostty** in System Settings › Notifications.
 4. Restart Ghostty, run `herdr`, then `pasture-layout` inside a repo.
-
-## 📦 What the Brewfile installs
-
-| Group | Tools |
-| ----- | ----- |
-| Core | `stow`, `jq`, `helix`, `lazygit`, `starship` |
-| Version control | `worktrunk` (`wt`), `sapling` (`sl`), `gh`, `glab` |
-| JS and Python | `fnm` (Node), `pnpm`, `bun`, `uv` |
-| Java | Eclipse Temurin 21, `maven` |
-| Rust tools | `sccache`, `cargo-nextest`, `cargo-deny`, `cargo-edit`, `cargo-binstall` (Rust itself comes from rustup) |
-| Agents' tools | `agent-browser`, `agent-desktop`, `sonarqube-cli` (`sonar`) |
-| Editors | Visual Studio Code, Antigravity IDE (an app you already installed by hand is adopted, not reinstalled) |
-| Bazel | `bazelisk` (as `bazel`; runs the version in each repo's `.bazelversion`), `buildifier` |
-| Language servers | `jdtls`, `pyright`, `ruff`, `marksman`, `taplo`, `yaml-language-server`, plus `starpls` from setup.sh |
-| Lint | `shellcheck` |
-
-The editors update themselves, so `brew upgrade` leaves them alone.
 
 ## 🧑‍🌾 Daily use
 
@@ -138,19 +142,39 @@ The editors update themselves, so `brew upgrade` leaves them alone.
 | ------- | ---- |
 | `herdr` | attach to the persistent session; agents keep running when Ghostty closes |
 | `pasture-layout [agent]` | shell, agent and lazygit in this tab; agent is `claude` (default), `codex`, `grok` or `agy` |
-| `pasture-duo [writer] [reviewer…]` | a writer and 1–3 read-only reviewers, e.g. `pasture-duo claude codex grok agy` (default: claude, codex) |
-| `pasture-collie` | 🐕 the flock board; `--list` only prints it, `--jump` goes to the agent that needs you, `--sweep` quits idle agents |
-| `pasture help` | 🧰 the command library: `pasture <group> <command>`, see below |
 | `pasture-task <branch> [agent]` | 🌱 new worktree for the branch, a herdr workspace in it, the layout with the agent; `--done <branch>` closes and removes it |
-| `pasture-skills` | 📚 install or update the skill packs for every agent; `--list` shows what each has |
+| `pasture-duo [writer] [reviewer…]` | 👯 a writer and 1–3 read-only reviewers, e.g. `pasture-duo claude codex grok agy` (default: claude, codex) |
+| `pasture-collie` | 🐕 the flock board; `--list` only prints it, `--jump` goes to the agent that needs you, `--sweep` quits idle agents |
 | `pasture-stack [dir]` | 🪜 the Sapling stack of a repo |
-| `pasture-icons` | re-tag the sidebar now (the plugin normally does it) |
-| `pasture-update` | update herdr, Claude Code, Codex, Grok Build and Antigravity; skips missing tools, keeps going on failure |
-| `pasture-update --all` | the same, plus `brew bundle` and `pasture-skills` |
+| `pasture-skills` | 📚 install or update the skill packs for every agent; `--list` shows what each has |
+| `pasture-icons` | 🏷️ re-tag the sidebar now (the plugin normally does it) |
+| `pasture-update` | 🔄 update herdr and every agent CLI; `--all` adds `brew bundle` and `pasture-skills` |
+| `pasture help` | 🧰 the command library, below |
 
-`pasture-layout` takes `PASTURE_TOP` (top row height, default 0.65) and
-`PASTURE_LEFT` (shell width, default 0.3). Agents and their update commands live
-in [`agents.conf`](agents.conf).
+### 🧰 The command library
+
+Agents tend to write a fresh shell script whenever they need to drive a CLI,
+each time a little differently. `pasture` gives them tested ones instead:
+
+```bash
+pasture help                         # every command, with its safety level
+pasture help mr stack                # usage and details of one
+pasture list --json                  # the same, for agents
+```
+
+| Group | Commands | For |
+| ----- | -------- | --- |
+| `agent` | `ask` · `ps` · `stop` · `sweep` | prompt another agent, see what it runs, stop it, send idle ones home |
+| `repo` · `pane` · `flow` | `who` · `tail` · `board` | who is in which worktree, another pane's output, every task's stage |
+| `stack` · `mr` | `push` · `attach` · `stack` · `fanout` | Sapling stacks as branches and GitLab MRs |
+| `doc` | `review` | fresh-eyes review of a doc by context-free agents |
+| `git` · `dep` · `sec` | `protect` · `guard` · `visibility` · `audit` · `cve` · `pentest` | secrets, dependencies, pentests |
+| `web` · `sys` | `read` · `line` | a page as text, machine load for the tab bar |
+
+**Safety levels.** `read` only reads. `write` changes local state and has
+`--dry-run`. `external` touches other systems: it prints its plan and exits 3
+unless given `--yes`, so an agent shows the plan and asks you first.
+Every command, flag and exit code: **[docs/commands.md](docs/commands.md)**.
 
 ## ⌨️ Keys
 
@@ -177,484 +201,21 @@ as Alt (`macos-option-as-alt = left`), so the right one still types `´ ∫ …`
 Closing Helix with `⌃⌥E` ends it, so unsaved buffers block the close: `:w`
 first. With VoiceOver on, ⌃⌥ is its modifier and macOS takes these keys first.
 
-## 🐕 The collie
-
-The agents are the sheep; the collie watches them so you don't have to.
-
-- **Bark.** herdr notifies you when an agent is done or needs input, through
-  Ghostty. Never for the tab you are on, and not for states that flip back
-  within 2 seconds.
-- **Come.** Click the notification to bring Ghostty forward, then `⌃⌥A` to land
-  on the first agent waiting for you, or else the first one done.
-- **Mark.** The `pasture.collie` plugin puts a 🐕 next to every agent waiting for
-  you in the sidebar, and removes it when the agent moves on or you focus it.
-- **Herd.** `⌃⌥S` opens the board, most urgent first: ⛔ waiting, ✅ done,
-  🏃 working, 💤 idle. Type a number to jump.
-- **Send home.** `⌃⌥X` runs `pasture agent sweep` in a popup: it quits every
-  idle agent after one y/N, typing each agent's own quit command (`/exit`,
-  `/quit`) so its session can be resumed. It skips agents with an unread
-  answer (✅ done), the focused one and named ones (agents started with a
-  name, as `pasture-duo` starts its reviewers). Their tabs
-  close too, unless another pane there still runs something (hx, a dev server,
-  a build): those stay and are named. Answer `F` to also force-stop the ones
-  that ignore their quit; `pasture agent sweep --tidy` closes idle tabs left
-  from earlier.
-  Idle agents hold memory — a few dozen push a 16GB Mac into swap — so this is
-  the cheap fix; each one is written to a ledger
-  (`~/.cache/pasture/swept.tsv`), and
-  `pasture agent sweep --recall` prints the `cd … && claude --continue` (or
-  codex/grok) line to call one back. Headless: `pasture agent sweep --yes`.
-
-The collie reads, tags and points, and stops or quits an agent only when you
-press the key and answer y: **it never answers an agent's prompts or approvals
-for you.** A click can't jump straight to the pane because the only
-notifier that runs a command on click, Homebrew's `terminal-notifier`, is
-ad-hoc signed and macOS won't let it post notifications.
-
-## 👯 Writer and reviewers
-
-Run `pasture-duo` at the root of a repo inside herdr. The pane you are in
-becomes the writer; reviewers start beside it, each named, so the writer can
-reach them with `herdr agent prompt`. They are meant to be read-only: Codex is
-held to it by its OS sandbox; Claude, Grok and Antigravity start in plan mode,
-which asks you before any edit (see [Trust](#-trust)). A review-loop prompt is copied
-to your clipboard: paste it into the writer and replace `<TASK>`.
-
-The prompt tells the writer to ask every reviewer at once, wait for all of them,
-merge the findings and settle disagreements: a security, data-loss or
-broken-build finding is fixed even if only one reviewer raised it; otherwise the
-majority decides; a tie goes to you. Reviewers only talk to the writer, never
-to each other. `PASTURE_DUO_ROUNDS` caps the rounds (default 2).
-
-### 🐠 Fresh eyes on a doc
-
-`pasture-duo` reviews code with agents that sit beside the writer. A design doc
-needs a different reader: one with no history. `pasture doc review <file>`
-starts every reviewer as a **new headless agent**. Each gets only the doc's path
-and a persona brief, so it has no context **because of how it starts**, not
-because it was told to ignore what it saw. It runs one per vendor, so their
-blind spots differ:
-
-```sh
-pasture doc review docs/design.md --yes              # 4 personas × allowed vendors
-pasture doc review README.md --personas naive-reader --vendors claude,grok --yes
-```
-
-Personas (`cmds/doc/personas/`): **zoom-out** (is this the simplest thing, does
-the code already have it), **naive-reader** (reads only the doc: where does a
-newcomer get lost), **critic** (failure modes, security, claims the code
-contradicts), **readiness** (what is still undecided before anyone can build it).
-They are inspired by the [Elephant-Goldfish Model](https://egm.dev).
-
-No reviewer can change anything, or read outside what it reviews. Each runs
-under a macOS sandbox (`sandbox-exec`) that refuses reading or writing
-anything in your home folder except reading the tree under review and that
-agent's login file (Codex and Grok also start from an empty home of their own,
-so no transcripts, memory, skills, plugins or MCP servers): a doc that tells a reviewer to open `~/.ssh` gets
-"Operation not permitted". Claude starts in an empty directory without your
-settings, hooks, plugins, MCP servers or auto-memory, and has only
-Read/Grep/Glob (the account email from your login is still in its context).
-Grok runs in plan mode with only its read, list and grep tools. Codex gets no
-tools at all, since its own sandbox cannot run inside another: the doc goes in
-its prompt and it reviews the doc alone, not the code.
-
-**The doc, and anything a reviewer reads, goes to every vendor used.** What
-they read decides who may see it:
-
-| The doc is… | Reviewers read | Vendors |
-|---|---|---|
-| in a public repo, pushed unchanged (checked with origin itself, not a local ref) | a `git archive` snapshot of origin's default branch: only what is already public | Claude, Codex, Grok |
-| in any other repo, or not yet pushed | your working tree | `$PASTURE_PRIVATE_REVIEW_VENDORS` (default `claude`) |
-| not in a git repo | a copy of the doc alone, never the folder around it | the same |
-
-Widen `PASTURE_PRIVATE_REVIEW_VENDORS` only as your employer's rules allow.
-Asking for a vendor the policy refuses exits 3. Like every `external` command,
-it prints its plan and needs `--yes`. Findings come back sorted
-⛔ blocker → 🔶 major → minor. The raw answers stay in
-`~/.cache/pasture/reviews/`.
-
-## 🧰 The pasture command library
-
-Agents tend to write a fresh shell script whenever they need to drive a CLI,
-each time a little differently. `pasture` gives them tested ones instead:
-
-```bash
-pasture help                         # every command, with its safety level
-pasture help mr stack                # usage and details of one
-pasture list --json                  # the same, for agents
-```
-
-| Command | Safety | Does |
-| ------- | ------ | ---- |
-| `pasture pane tail <pane> [--wait REGEX]` | read | another pane's recent output, or wait until a pattern appears |
-| `pasture web read <url>` | read | a page as text: plain fetch first, agent-browser when that comes back empty or walled |
-| `pasture repo who [dir] [--check]` | read | the worktrees of this repo, each with its branch, uncommitted files and the agents in it; `--check` exits 3 when another agent is in yours |
-| `pasture mr stack <search>` | read | open GitLab MRs as a stack: which branch sits on which, each MR's own vs visible diff, CI |
-| `pasture doc review <file>` | external | fresh-eyes review: each persona × vendor a new read-only headless agent, findings by severity |
-| `pasture agent ask <name> "<prompt>"` | write | prompt another agent, wait, print its answer; refuses when it is blocked on the user |
-| `pasture mr fanout <branch>…` | external | move stacked branches onto the default branch (trunk-based), in a temporary worktree, force-push with lease |
-| `pasture stack push <prefix> [--mr]` | external | push each commit of a Sapling stack to its own branch, optionally as a chain of MRs |
-| `pasture stack attach` | write | put git's HEAD back on this worktree's branch after Sapling detached it (the Sapling hooks run it for you) |
-| `pasture sec pentest <dir\|url>…` | external | 🛡 Strix AI pentest of your own code or local app, on a copy, with a model the target's privacy allows |
-
-**Safety levels.** `read` only reads. `write` changes local state and has
-`--dry-run`. `external` touches other systems: it prints its plan and exits 3
-unless given `--yes`, so an agent shows the plan and asks you first. Exit codes
-are shared: 0 ok, 1 failed, 2 usage, 3 needs you, 4 timed out, 5 missing tool.
-
-**Adding one.** A command is an executable file `cmds/<group>/<command>` whose
-first lines declare `# summary:`, `# usage:` and `# safety:`; `cmds/lib.sh` has
-the shared helpers. Commands of your own go in
-`~/.config/pasture/cmds.local/<group>/<command>`, which is never committed and
-wins over a built-in of the same name. Only these two places are read: a
-repository you open cannot add commands.
-
-## 🛡 Pentesting your own app
-
-[Strix](https://github.com/usestrix/strix) runs a team of AI agents in a Docker
-sandbox that read your code, run it and try real exploits, then report what
-they could prove. It attacks what you point it at and sends what it sees to an
-LLM, so pasture runs it through `pasture sec pentest`, which decides first:
-
-```bash
-uv tool install strix-agent                       # once; pasture-update keeps it current
-export STRIX_LLM=anthropic/<model> LLM_API_KEY=…  # or a local model
-pasture sec pentest ./services/api http://localhost:8080   # the plan
-pasture sec pentest ./services/api http://localhost:8080 --yes
-```
-
-- **Targets.** Code (a directory inside a git repo, or a file) goes in as a
-  copy in `~/.cache/pasture/pentest/<run>`, because Strix mounts targets
-  writable. The copy holds what git tracks plus untracked files that are not
-  ignored, so ignored `.env` files stay out, and has no symlinks. A URL must be
-  loopback (`localhost`, `127.x`, `::1`, `host.docker.internal`) or a host
-  listed in `~/.config/pasture/pentest-scope`. **List a host only when you own
-  it or have written permission to test it**: Strix attacks it for real. That
-  file is yours to write, never an agent's. Git URLs are refused; clone first.
-- **Who sees it.** Code that is already public (a public repo, clean, HEAD on
-  origin) may go to any model. Anything else, and any running app, only to a
-  provider in `PASTURE_PRIVATE_PENTEST_PROVIDERS` (default `anthropic`) or a
-  local model (`ollama`, `lm_studio`, or `LLM_API_BASE` on loopback). An
-  endpoint set anywhere (`*_API_BASE` / `*_BASE_URL` in the environment or in
-  Strix's saved config) counts: `anthropic/…` through a proxy is that proxy.
-- **How much.** `--mode quick|standard|deep` (default quick), `--budget USD`
-  (default 5). Exit 0 no findings, 1 findings or a failed run; the report stays
-  in the run directory (`strix view` there opens it).
-- **Not used:** `strix cloud` (uploads your code to strix.ai) and Strix's own
-  skill pack, which would let an agent start a pentest without this check.
-
-## 🌱 One task, one worktree
-
-Two agents in one working copy step on each other: one's edits land in the
-other's diff, builds and tests run on a mix. Each parallel task gets its own
-git worktree instead, managed by [Worktrunk](https://worktrunk.dev) (`wt`):
-
-```bash
-pasture-task feature/PROJ-1234-login codex   # worktree + herdr workspace + layout
-pasture-task feature/PROJ-1240-report        # a second task, claude by default
-wt list                                      # every worktree, with status
-pasture-task --done feature/PROJ-1234-login  # after it merged: close and remove
-```
-
-Worktrees go to `.worktrees/<branch>` inside the repo
-(`home/worktrunk/.config/worktrunk/config.toml`). `pasture-task` adds
-`.worktrees/` to the repo's local `.git/info/exclude`, so `git status` stays
-clean, and warns when a Bazel repo lacks it in `.bazelignore`. The herdr
-workspace is named after the branch, so the sidebar and the collie's board
-show which task each agent is on.
-
-Before an agent starts editing a repo, `pasture repo who` shows who is
-already there:
-
-```
-🌿 . (master)  ✎ 15 uncommitted
-     💤 wV:p1  claude pull the latest code
-🌿 .worktrees/feature-login (feature-login) ← here
-     (no agent)
-```
-
-git refuses to check out one branch in two worktrees, but nothing stops a
-second agent from working in a worktree another agent is already editing.
-`pasture repo who --check` exits 3 when an agent other than this pane is in the
-same worktree; the agent should make its own (`pasture-task <branch>`) instead.
-
-`wt switch <branch>` jumps between worktrees in the shell (pasture.zsh loads its
-shell integration). `wt merge` merges locally into the default branch; where
-changes go through merge requests, push and open one instead, and run
-`pasture-task --done` once it has landed: the branch is deleted only if merged.
-
-## 🪜 Stacks with Sapling
-
-Sapling (`sl`) works inside any git repo or git worktree as it is: no `sl clone`,
-nothing to migrate, and git, lazygit and starship keep working next to it. Use
-it to split one task into a stack of small commits, one per merge request, and
-to edit the middle of the stack without a rebase:
-
-```bash
-sl commit -m "step 1"; sl commit -m "step 2"   # build the stack
-sl prev; sl amend                              # fix step 1; step 2 follows
-sl absorb                                      # fold edits into the commits they belong to
-sl stack                                       # just this stack (pasture alias)
-sl push --to feature/PROJ-1234-step-1          # publish to a git branch
-```
-
-`⌃⌥G` shows the stack of the focused pane's repo; press `w` to open it in
-Sapling's browser UI (`sl web`).
-
-- **Detached HEAD.** `sl commit` on a branch moves the branch, but `sl prev`,
-  `sl next` and `sl goto` leave git's HEAD detached. Detached, a worktree no
-  longer holds its branch: another worktree can check it out, and `wt list` and
-  `pasture-task --done` stop finding the task. pasture's Sapling hooks run
-  `pasture stack attach` after each of them, which puts HEAD back on the branch
-  once you are at the top of the stack again (and fast-forwards the branch if
-  you committed on top while detached). Mid-stack it stays detached until
-  `sl top`. `pasture repo who` shows a detached worktree's task branch. Push
-  with `sl push --to <branch>`.
-- **GitLab.** `sl pr` (stacked pull requests) is GitHub only. On GitLab, push
-  each step to its own branch and open the merge requests with `glab`.
-- **Parallel work.** A stack is a sequence in one working copy. Two tasks at the
-  same time need a worktree each (`pasture-task`); each worktree has its own
-  stack.
-
-## 📚 Skills for every agent
-
-Skills are folders of instructions (a `SKILL.md` each) that an agent loads when
-a task matches. pasture keeps one set for all agents, listed in
-[`skills.conf`](skills.conf). The default pack is
-**[The Art of Agent Skills](https://github.com/kinhluan/skills)**
-(`kinhluan/skills`, plugin `kinhluan-skills`): software delivery, architecture
-(C4, DDD, ADRs), security, product, and academic research. Its `pasture` skill teaches
-agents this setup: which pasture tool fits which task (worktrees, stacks,
-herdr, the browser and desktop tools) and the shared rules, such as never
-answering another agent's approval dialog.
-
-```text
-kinhluan/skills | kinhluan-skills@kinhluan
-```
-
-Each line is a GitHub repo and, when the repo ships one, its Claude Code
-plugin. `pasture-skills` then installs every pack:
-
-| Agent | Gets the pack as | Global folder |
-| ----- | ---------------- | ------------- |
-| Claude Code | the plugin (with its router hook), names like `kinhluan-skills:c4-model` | managed by `claude plugin` |
-| Codex | bare skills | `~/.agents/skills` |
-| Grok Build | bare skills | `~/.grok/skills` |
-| Antigravity | bare skills | `~/.gemini/antigravity/skills` |
-
-Bare skills go through the [`skills`](https://github.com/vercel-labs/skills)
-CLI, run with `npx` at a pinned version (`PASTURE_SKILLS_CLI`), so Node.js is
-needed. A pack without a plugin goes to Claude Code as bare skills too. The
-VS Code extensions of Claude Code and Codex read the same folders. Add your own
-packs as more lines; restart running agents to load new skills.
-
-If `~/.agents` was once created with `sudo`, nothing can write there:
-`sudo chown -R "$USER" ~/.agents` fixes it, and `pasture-skills` warns about it.
-
-## 🌐 Agents and the web
-
-A plain fetch is cheap and fine for static, public pages. For pages rendered by
-JavaScript, behind a login or needing clicks, any agent can use
-`agent-browser`:
-
-```bash
-agent-browser open example.com
-agent-browser snapshot -i     # interactive elements only, each with a ref like @e1
-agent-browser click @e1
-agent-browser read            # the page's text after JavaScript has run
-```
-
-Agents learn the full tool with `agent-browser skills get core`. Pointed at a
-logged-in browser profile, an agent can do anything you can on those sites;
-use a separate profile for anything sensitive.
-
-Each herdr pane gets its own browser: `pasture.zsh` sets
-`AGENT_BROWSER_SESSION=pane-<pane id>`, so agents running side by side never
-share tabs or `@e` refs. Each session is a separate Chrome, which costs memory;
-`agent-browser session list` shows them and `agent-browser close --all` closes
-them. Set `AGENT_BROWSER_SESSION` yourself to share one browser on purpose.
-
-## ☕ Java and 🦀 Rust
-
-- **Java:** Homebrew installs Eclipse Temurin 21 and Maven. `pasture.zsh` sets
-  `JAVA_HOME` to JDK 21 unless you set it yourself, and `jdk <version>` switches
-  the current shell (`jdk` alone lists installed JDKs). For another version,
-  add a cask such as `temurin@17`. Temurin is free to use at work; older Oracle
-  JDK builds need a license there.
-- **Rust:** install [rustup](https://rustup.rs) once; it is not in the
-  Brewfile because it updates itself. `pasture-update` runs `rustup update`
-  (it is listed in `agents.conf`), `setup.sh` adds the `rust-analyzer`
-  component for Helix, and `pasture.zsh` puts `~/.cargo/bin` on PATH.
-  Cargo manages dependencies (`cargo add`, `cargo update`, `cargo tree`);
-  Homebrew adds the tools around it:
-
-  | Tool | Use |
-  | ---- | --- |
-  | `sccache` | compile cache shared by every worktree and repo (`RUSTC_WRAPPER`, set in `pasture.zsh`) |
-  | `cargo nextest run` | faster tests, compact output |
-  | `cargo deny check` | RustSec advisories, licenses, sources and duplicate versions (configure with `deny.toml`) |
-  | `cargo upgrade` | raise versions in `Cargo.toml`, majors included (`cargo update` only moves `Cargo.lock`) |
-  | `cargo binstall <tool>` | install other cargo tools as prebuilt binaries |
-
-  Commit `Cargo.lock` for applications. In a Bazel repo, Rust dependencies go
-  through `rules_rust` and `crate_universe`, and Bazel does the caching.
-
-## 📦 Node, pnpm, bun and uv
-
-**Node** comes through [fnm](https://github.com/Schniz/fnm). `setup.sh` installs
-the newest LTS as the default and `pasture-update` keeps it current. In a
-project with `.nvmrc` or `.node-version` (looked up from the current directory
-upwards, or `engines.node` in `package.json`), fnm switches to that version on
-`cd` and offers to install it if missing. fnm is loaded after `~/.zshrc`, so it
-wins over an nvm loaded there; `setup.sh` reminds you to remove nvm's lines,
-which slow every new shell. Pin Node per project with a `.nvmrc` rather than
-relying on the default.
-
-pnpm, bun and uv come from Homebrew and update with `pasture-update --all`.
-`pasture.zsh` puts their global bin dirs on PATH (`~/Library/pnpm` for
-`pnpm add -g`, `~/.bun/bin`; uv tools land in `~/.local/bin`) and loads
-completions for pnpm, uv and fnm. Their stores and caches are shared by default, so
-the worktrees of one repo reuse downloads.
-
-- **One copy of each.** A second install, such as uv's standalone installer in
-  `~/.local/bin` or a pnpm from `npm i -g`, comes first on PATH and goes stale.
-  `setup.sh` warns and prints the command that removes it.
-- **pnpm versions per repo.** Homebrew's pnpm is the newest major. A repo that
-  needs an older one should pin it in `package.json`
-  (`"packageManager": "pnpm@10.28.1"`); pnpm then runs that version there.
-  Check before removing an older global pnpm, since a newer pnpm may rewrite an
-  old lockfile.
-- **No registry logins here.** `~/.npmrc` and private Python indexes hold
-  tokens; they stay on the machine, never in this repo.
-
-## 🖥️ Agents and the desktop
-
-[agent-desktop](https://github.com/vercel-labs/agent-desktop) is agent-browser
-for native apps: it reads an app's accessibility tree (no screenshots, no
-pixel matching) and acts on refs.
-
-```bash
-agent-desktop snapshot --app Finder -i   # interactive elements, each with a ref
-agent-desktop click @s8f3k2p9:e8         # refs belong to that snapshot
-agent-desktop skills get desktop         # the guide agents should read first
-agent-desktop skills get platform        # then the macOS part: permissions, quirks
-```
-
-By default it acts only through the accessibility API. Hover, drag,
-double-click and clicks at screen coordinates move the real mouse and need
-`--headed`, so an agent has to ask for them explicitly.
-
-**One agent at a time.** Unlike agent-browser, there is no per-pane session:
-the screen, keyboard focus and mouse belong to the whole Mac. Two agents
-driving apps at once steal focus from each other, so give desktop tasks to a
-single agent.
-
-It does nothing until macOS allows it, and that permission goes to the app it
-runs in: **Ghostty**. Granting Ghostty Accessibility (and Screen Recording, for
-screenshots) lets every shell and every agent in Ghostty read and operate
-every app on your Mac. Run `agent-desktop permissions --guide` only if you want
-that, and consider revoking it when you are done. Snapshots can contain
-private content from other apps; keep them out of logs and uploads.
-
-## 🎨 Colors and emoji
-
-Ghostty's palette is the single source: Helix uses `base16_terminal`, herdr its
-`terminal` theme, and lazygit and starship terminal colors, so changing
-Ghostty's theme recolors everything. The one exception is agent names in the
-sidebar, tinted in their maker's color in hex, because herdr's token styles
-take no ANSI color names.
-
-pasture's own decorations are emoji, not Nerd Font glyphs, so no patched font
-is needed (herdr's agent-state icons still use the herdr-radar font, which
-`setup.sh` checks for):
-
-- **Prompt:** `📂 repo 🌿 branch 📝❓ ☕ v21 ⏱️ 4s` over a `🐑 ❯` input line.
-- **herdr title and tab bar:** `🐑 <workspace> · <tab>` and `🐑 pasture  🕐 14:52`.
-- **Pane labels** from `pasture-layout`: `🐚 shell`, `🤖 claude` (🧠 codex,
-  ⚡ grok, 🪐 agy), `🌿 lazygit`.
-- **Sidebar tags:** project type per workspace, maker per agent. They are herdr
-  metadata, so workspace names stay plain for scripts and the window title.
-
-## 🐚 Shell
-
-pasture does not own `~/.zshrc`. It ships `~/.config/pasture/pasture.zsh`
-(PATH, `EDITOR=hx`, completions for herdr, gh and glab, Worktrunk's shell
-integration, the starship prompt).
-Add one line at the **end** of `~/.zshrc`, after oh-my-zsh or `compinit`:
-
-```zsh
-source ~/.config/pasture/pasture.zsh
-```
-
-Starship replaces any oh-my-zsh theme because it loads last; set `ZSH_THEME=""`
-to skip loading a theme nobody sees.
-
-## 🗂️ Layout of this repo
-
-Each folder under `home/` is a [GNU Stow](https://www.gnu.org/software/stow/)
-package that mirrors `$HOME`. `setup.sh` stows every one it finds, so adding a
-package is adding a folder. `plugins/` holds herdr plugins, linked in place so
-they run from this clone, and `cmds/` holds the `pasture` command library. The
-root holds `setup.sh`, `Brewfile`, `agents.conf` and `skills.conf`.
-
-| Package | Links to |
-| ------- | -------- |
-| `ghostty` | `~/.config/ghostty/config` |
-| `herdr` | `~/.config/herdr/config.toml` |
-| `helix` | `~/.config/helix/{config,languages}.toml` |
-| `lazygit` | `~/.config/lazygit/config.yml` |
-| `starship` | `~/.config/starship.toml` |
-| `worktrunk` | `~/.config/worktrunk/config.toml` |
-| `sapling` | `~/Library/Preferences/sapling/sapling.conf` |
-| `zsh` | `~/.config/pasture/pasture.zsh` |
-| `bin` | `~/.local/bin/pasture` and `pasture-{layout,task,duo,collie,stack,skills,icons,update}` |
-
-| Plugin | Runs on | Does |
-| ------ | ------- | ---- |
-| `plugins/herdr-pasture` (`pasture.tags`) | herdr start, new agent, new workspace | 🏷️ project and maker tags in the sidebar |
-| `plugins/herdr-collie` (`pasture.collie`) | agent state change, pane focus | 🐕 marks agents waiting for you |
-
-## 🔒 Trust
-
-- **No secrets in this repo.** Logins stay in the macOS Keychain (gh, glab);
-  machine-specific tweaks go in git-ignored `*.local` files. Sapling takes your
-  name and email from git config.
-- Formulae come from `homebrew/core`, casks from `homebrew/cask`. The agent CLIs
-  are signed by their vendors' Apple Developer IDs.
-- **Skill packs are instructions your agents follow.** Only list repos you
-  trust in `skills.conf`, and read a pack before adding it. The `skills` CLI is
-  pinned so an update can't change what runs.
-- `starpls` is checked against a pinned sha256 before it is unpacked; bump
-  `STARPLS_VERSION` and both hashes together.
-- **herdr** sees every pane's output and can type into them, yet its binary is
-  unsigned and installed with `curl | sh`. Install it only from the official
-  site, and review third-party herdr plugins before adding them. Theme plugins
-  that write `~/.config/herdr/config.toml` are editing this repo, since it is a
-  link.
-- **pasture's plugins run automatically.** They only read pane and workspace
-  info and write display metadata. Read them before linking.
-- **Reviewers are read-only, mostly by permission.** Only Codex's
-  (`--sandbox read-only`) is enforced by the OS. Claude and Grok
-  (`--permission-mode plan`) and Antigravity (`--mode plan --sandbox`) ask before
-  an edit, so deny it; the collie marks a reviewer that asks with a 🐕.
-
-## 🚫 Not managed here
-
-`~/.zshrc` itself, git config, `~/.claude`, IntelliJ, and the settings and
-extensions of VS Code and Antigravity IDE (only the apps are installed). Put
-machine-specific tweaks in `*.local` files.
-
 ## 🤝 Contributing
 
 Issues and pull requests are welcome. Scripts must parse with macOS's own
-`/bin/bash` 3.2 and pass `shellcheck`:
+`/bin/bash` 3.2 and pass `shellcheck`, and the command reference must match
+the commands' headers:
 
 ```bash
-for f in setup.sh home/bin/.local/bin/* plugins/*/*.sh cmds/lib.sh cmds/*/*; do /bin/bash -n "$f"; done
-shellcheck -x setup.sh home/bin/.local/bin/* plugins/*/*.sh cmds/lib.sh cmds/*/*
+for f in setup.sh home/bin/.local/bin/* plugins/*/*.sh cmds/lib.sh cmds/*/* scripts/*; do /bin/bash -n "$f"; done
+shellcheck -x setup.sh home/bin/.local/bin/* plugins/*/*.sh cmds/lib.sh cmds/*/* scripts/*
 zsh -n home/zsh/.config/pasture/pasture.zsh
 herdr config check
+scripts/commands-doc --check   # after changing a command: scripts/commands-doc
 ```
+
+How a command is laid out: [docs/customize.md](docs/customize.md#adding-a-command).
 
 ## 🙏 Built on
 
@@ -662,7 +223,8 @@ herdr config check
 [Helix](https://helix-editor.com) · [lazygit](https://github.com/jesseduffield/lazygit) ·
 [starship](https://starship.rs) · [Worktrunk](https://worktrunk.dev) ·
 [Sapling](https://sapling-scm.com) · [Strix](https://github.com/usestrix/strix) · [agent-browser](https://agent-browser.dev) ·
-[agent-desktop](https://github.com/vercel-labs/agent-desktop) · [GNU Stow](https://www.gnu.org/software/stow/)
+[agent-desktop](https://github.com/vercel-labs/agent-desktop) · [gitleaks](https://github.com/gitleaks/gitleaks) ·
+[semgrep](https://semgrep.dev) · [grype](https://github.com/anchore/grype) · [GNU Stow](https://www.gnu.org/software/stow/)
 
 ## 📄 License
 
