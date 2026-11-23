@@ -48,7 +48,7 @@ brew "worktrunk"
 brew "agent-browser"
 # The same for native macOS apps, through the accessibility tree. Does nothing
 # until you grant Ghostty Accessibility (and Screen Recording for screenshots);
-# see README "Agents and the desktop" before you do.
+# see docs/web-and-desktop.md "Operating Mac apps" before you do.
 brew "agent-desktop"
 
 # Editors whose agents (Claude Code / Codex extensions, Antigravity's agent)
